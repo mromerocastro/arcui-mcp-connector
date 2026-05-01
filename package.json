@@ -1,0 +1,22 @@
+{
+  "name": "arcui-mcp-server",
+  "version": "0.1.0",
+  "description": "Model Context Protocol (MCP) server for ArcUI — exposes DataStore, AlarmManager, SystemHealth and ReportGenerator as MCP tools so LLM clients (Claude Desktop, Unity AI Assistant, Cursor, etc.) can query a running ArcUI session.",
+  "type": "module",
+  "main": "src/server.js",
+  "bin": {
+    "arcui-mcp-server": "src/server.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "check-bridge": "node src/check-bridge.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
