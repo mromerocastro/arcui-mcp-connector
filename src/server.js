@@ -173,7 +173,110 @@ const BUILDER_TOOLS = [
     },
 ];
 
-const ALL_TOOLS = [...OPERATIONS_TOOLS, ...BUILDER_TOOLS];
+// ─── Training Tools ────────────────────────────────────────────────────────
+//
+// Scenario authoring + live session control. The instructor can author a
+// scenario, register it in the running ArcUI bridge, kick off playback on
+// the in-Unity ArcHMIScenarioRunner, push live tag injections during the
+// run, and read back the chronological session record for debrief.
+//
+// ArcUI side: requires the scene to boot in Training mode
+// (ArcHMIContractLoader.runtimeMode = Training) and to have an
+// ArcHMIScenarioRunner + ArcHMITrainingSession somewhere in the scene.
+const TRAINING_TOOLS = [
+    {
+        name: "create_scenario",
+        description:
+            "Author a Training scenario from a JSON description and register it in the ArcUI bridge. " +
+            "The scenario is a list of timed events; each event writes a value to a DataStore tag at " +
+            "offset_seconds after playback starts. The bridge returns a scenario_id that 'start_scenario' " +
+            "consumes. Use this when the user asks to 'create a training case', 'simulate a fault', or " +
+            "'design an exercise around a specific failure mode'.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                id: {
+                    type: "string",
+                    description: "Stable identifier for the scenario (e.g. 'welder-argon-loss-001'). " +
+                                 "Re-using an id overwrites the prior scenario in the registry.",
+                },
+                display_name: {
+                    type: "string",
+                    description: "Short human-readable title shown in instructor tooling.",
+                },
+                description: {
+                    type: "string",
+                    description: "Operator-facing briefing. The ARIA tutor may surface this at scenario start.",
+                },
+                events: {
+                    type: "array",
+                    description: "Scripted timeline. Each entry writes one value to one tag at offset_seconds.",
+                    items: {
+                        type: "object",
+                        properties: {
+                            offset_seconds: { type: "number", minimum: 0, description: "Seconds after playback starts when this event fires." },
+                            tag_key:        { type: "string",  description: "DataStore tag key to write." },
+                            value_type:     { type: "string", enum: ["Float", "Int", "Bool", "String"], default: "Float" },
+                            raw_value:      { type: "string", description: "Value as a string. Parsed via InvariantCulture by ArcUI." },
+                            description:    { type: "string", description: "Optional human note for journals and inspectors." },
+                        },
+                        required: ["tag_key", "value_type", "raw_value"],
+                    },
+                },
+            },
+            required: ["id"],
+        },
+    },
+    {
+        name: "start_scenario",
+        description:
+            "Begin playback of a registered scenario on the scene's ArcHMIScenarioRunner. Refuses if no " +
+            "runner is present in the scene, if the scene is not in Training mode, or if the scenario_id " +
+            "is unknown. Pair with 'list_scenarios' to discover available ids.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                scenario_id: { type: "string", description: "Id returned by 'create_scenario'." },
+            },
+            required: ["scenario_id"],
+        },
+    },
+    {
+        name: "list_scenarios",
+        description:
+            "Enumerate every scenario currently registered in the ArcUI bridge, with id, display name, " +
+            "description, and event count. Use this to introspect what the trainee can run.",
+        inputSchema: { type: "object", properties: {} },
+    },
+    {
+        name: "inject_event",
+        description:
+            "Write a single value to a DataStore tag during a live training session. Attributed to the " +
+            "'training_scenario' writer in the audit trail so it is distinguishable from trainee actions " +
+            "or live operator commands. Use this for ad-hoc instructor moves like 'make it harder' or " +
+            "'force a specific value right now', without authoring a full scenario.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                tag_key:    { type: "string",  description: "DataStore tag key to write." },
+                value_type: { type: "string", enum: ["Float", "Int", "Bool", "String"], default: "Float" },
+                raw_value:  { type: "string",  description: "Value as a string. Parsed via InvariantCulture by ArcUI." },
+            },
+            required: ["tag_key", "value_type", "raw_value"],
+        },
+    },
+    {
+        name: "evaluate_session",
+        description:
+            "Read the active ArcHMITrainingSession's chronological record: alarm activations, " +
+            "acknowledgements, resolutions, and tag changes captured so far. Returns the raw event " +
+            "list for the LLM to turn into a debrief narrative. When no session is active, the " +
+            "response carries active=false and an empty events array.",
+        inputSchema: { type: "object", properties: {} },
+    },
+];
+
+const ALL_TOOLS = [...OPERATIONS_TOOLS, ...BUILDER_TOOLS, ...TRAINING_TOOLS];
 
 // ─── Tool Handlers ─────────────────────────────────────────────────────────
 
@@ -272,6 +375,29 @@ const HANDLERS = {
             note: catalogs[v] ? "Reference tag names — adapt to your specific equipment." : "Unknown vertical; provide one of: energy, medical, defense, industrial.",
         });
     },
+
+    // ── Training (Path C of the Training subsystem) ────────────────────────
+    create_scenario: async (args) => {
+        if (!args?.id) return asError("Parameter 'id' is required.");
+        return asText(await bridge.createScenario(args));
+    },
+
+    start_scenario: async (args) => {
+        if (!args?.scenario_id) return asError("Parameter 'scenario_id' is required.");
+        return asText(await bridge.startScenario(args));
+    },
+
+    list_scenarios: async () => asText(await bridge.listScenarios()),
+
+    inject_event: async (args) => {
+        if (!args?.tag_key)    return asError("Parameter 'tag_key' is required.");
+        if (!args?.value_type) return asError("Parameter 'value_type' is required.");
+        if (args?.raw_value === undefined || args?.raw_value === null)
+            return asError("Parameter 'raw_value' is required.");
+        return asText(await bridge.injectEvent(args));
+    },
+
+    evaluate_session: async () => asText(await bridge.evaluateSession()),
 };
 
 // ─── Wire up MCP Server ────────────────────────────────────────────────────

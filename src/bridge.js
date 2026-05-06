@@ -76,4 +76,11 @@ export const bridge = {
     triggerAlarm:   (payload)          => request("POST", "/mcp/alarms/trigger", { body: payload }),
     health:         ()                 => request("GET",  "/mcp/health"),
     report:         (payload)          => request("POST", "/mcp/report", { body: payload }),
+
+    // ── Training (scenario authoring + live session) ─────────────────────────
+    createScenario:   (payload)        => request("POST", "/mcp/scenario/create",  { body: payload }),
+    startScenario:    (payload)        => request("POST", "/mcp/scenario/start",   { body: payload }),
+    listScenarios:    ()               => request("GET",  "/mcp/scenario/list"),
+    injectEvent:      (payload)        => request("POST", "/mcp/session/inject",   { body: payload }),
+    evaluateSession:  ()               => request("GET",  "/mcp/session/evaluate"),
 };
