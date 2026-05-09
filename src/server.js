@@ -22,6 +22,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { bridge } from "./bridge.js";
+import { geminiFileSearch } from "./gemini-file-search.js";
 
 // ─── Tool Catalog ──────────────────────────────────────────────────────────
 
@@ -276,7 +277,194 @@ const TRAINING_TOOLS = [
     },
 ];
 
-const ALL_TOOLS = [...OPERATIONS_TOOLS, ...BUILDER_TOOLS, ...TRAINING_TOOLS];
+const KNOWLEDGE_TOOLS = [
+    {
+        name: "knowledge_status",
+        description:
+            "Return Gemini File Search configuration status for ArcUI Knowledge Packs. " +
+            "Use this before indexing or querying knowledge so setup issues are explicit.",
+        inputSchema: { type: "object", properties: {} },
+    },
+    {
+        name: "create_knowledge_store",
+        description:
+            "Create a Gemini File Search store for an ArcUI Knowledge Pack. " +
+            "Use one store per system/equipment when possible, e.g. MQTT_Turbine.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                display_name: {
+                    type: "string",
+                    description: "Human-readable store name, e.g. 'ArcUI MQTT Turbine Knowledge'.",
+                },
+                embedding_model: {
+                    type: "string",
+                    default: "models/gemini-embedding-2",
+                    description: "Embedding model for the store.",
+                },
+            },
+        },
+    },
+    {
+        name: "list_knowledge_stores",
+        description:
+            "List Gemini File Search stores visible to the configured Gemini API key.",
+        inputSchema: { type: "object", properties: {} },
+    },
+    {
+        name: "list_knowledge_documents",
+        description:
+            "List documents already indexed into an ArcUI Knowledge Pack / Gemini File Search store.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                store_name: {
+                    type: "string",
+                    description: "Store resource name, e.g. 'fileSearchStores/my-store'. Defaults to ARCUI_KNOWLEDGE_STORE.",
+                },
+            },
+        },
+    },
+    {
+        name: "index_knowledge_file",
+        description:
+            "Upload and index one local document into the configured Gemini File Search store. " +
+            "Use for approved manuals, SOPs, context.json files, prompts, protocols, and scenario references.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                path: {
+                    type: "string",
+                    description: "Absolute or working-directory-relative path to a local file.",
+                },
+                store_name: {
+                    type: "string",
+                    description: "Store resource name. Defaults to ARCUI_KNOWLEDGE_STORE.",
+                },
+                display_name: {
+                    type: "string",
+                    description: "Citation-visible document name.",
+                },
+                metadata: {
+                    type: "object",
+                    description:
+                        "Optional filterable metadata, e.g. { system:'MQTT_Turbine', domain:'training', approved:'true' }.",
+                },
+                max_tokens_per_chunk: {
+                    type: "integer",
+                    minimum: 1,
+                    description: "Optional chunk size override.",
+                },
+                max_overlap_tokens: {
+                    type: "integer",
+                    minimum: 0,
+                    description: "Optional chunk overlap override.",
+                },
+                wait: {
+                    type: "boolean",
+                    default: true,
+                    description: "Wait for indexing to complete before returning.",
+                },
+            },
+            required: ["path"],
+        },
+    },
+    {
+        name: "search_training_knowledge",
+        description:
+            "Ask a question against the ArcUI Knowledge Pack using Gemini File Search. " +
+            "Returns grounded text plus citations/source chunks when available.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                query: { type: "string", description: "Question or retrieval prompt." },
+                store_name: { type: "string", description: "Defaults to ARCUI_KNOWLEDGE_STORE." },
+                metadata_filter: {
+                    type: "string",
+                    description: "Optional Gemini metadata filter, e.g. 'system = \"MQTT_Turbine\" AND approved = \"true\"'.",
+                },
+                instruction: {
+                    type: "string",
+                    description: "Optional extra instruction prepended to the query.",
+                },
+                model: {
+                    type: "string",
+                    description: "Gemini model. Defaults to ARCUI_KNOWLEDGE_MODEL or gemini-3-flash-preview.",
+                },
+            },
+            required: ["query"],
+        },
+    },
+    {
+        name: "generate_grounded_scenario",
+        description:
+            "Generate a draft ArcUI Training scenario grounded in the Knowledge Pack and constrained to live ArcUI tags. " +
+            "By default this returns a draft for instructor review; set register=true to send it to Unity create_scenario.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                request: {
+                    type: "string",
+                    description: "Instructor request, e.g. 'Create a brake failure scenario for the turbine'.",
+                },
+                system: {
+                    type: "string",
+                    description: "Optional system/equipment name to include in the prompt.",
+                },
+                constraints: {
+                    type: "string",
+                    description: "Optional extra constraints for event timing, severity, trainee level, etc.",
+                },
+                store_name: { type: "string", description: "Defaults to ARCUI_KNOWLEDGE_STORE." },
+                metadata_filter: {
+                    type: "string",
+                    description: "Optional Gemini metadata filter, e.g. 'approved = \"true\"'.",
+                },
+                register: {
+                    type: "boolean",
+                    default: false,
+                    description: "When true, register the generated scenario in the running Unity bridge.",
+                },
+                model: { type: "string", description: "Optional Gemini model override." },
+            },
+            required: ["request"],
+        },
+    },
+    {
+        name: "generate_training_debrief",
+        description:
+            "Generate a grounded debrief for the active ArcUI Training session using the Knowledge Pack. " +
+            "The tool reads evaluate_session from Unity unless session_json is provided.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                request: {
+                    type: "string",
+                    description: "Instructor focus for the debrief.",
+                },
+                session_json: {
+                    type: "string",
+                    description: "Optional raw session JSON. If omitted, the active Unity session is fetched.",
+                },
+                store_name: { type: "string", description: "Defaults to ARCUI_KNOWLEDGE_STORE." },
+                metadata_filter: {
+                    type: "string",
+                    description: "Optional Gemini metadata filter, e.g. 'approved = \"true\"'.",
+                },
+                model: { type: "string", description: "Optional Gemini model override." },
+            },
+        },
+    },
+];
+
+// Knowledge tools are gated by ARCUI_ENABLE_KNOWLEDGE_TOOLS so MCP clients
+// never see Gemini-backed tools they cannot actually use. knowledge_status
+// is always exposed so consumers can discover how to enable the rest.
+const ACTIVE_KNOWLEDGE_TOOLS = geminiFileSearch.isEnabled()
+    ? KNOWLEDGE_TOOLS
+    : KNOWLEDGE_TOOLS.filter((t) => t.name === "knowledge_status");
+
+const ALL_TOOLS = [...OPERATIONS_TOOLS, ...BUILDER_TOOLS, ...TRAINING_TOOLS, ...ACTIVE_KNOWLEDGE_TOOLS];
 
 // ─── Tool Handlers ─────────────────────────────────────────────────────────
 
@@ -286,6 +474,22 @@ function asText(obj) {
 
 function asError(msg) {
     return { content: [{ type: "text", text: msg }], isError: true };
+}
+
+async function getLiveTagsForKnowledge() {
+    try {
+        const result = await bridge.listTags();
+        return Array.isArray(result?.tags) ? result.tags : [];
+    } catch {
+        return [];
+    }
+}
+
+function parseOptionalJson(raw, fallback = {}) {
+    if (!raw) return fallback;
+    if (typeof raw === "object") return raw;
+    try { return JSON.parse(raw); }
+    catch (e) { throw new Error(`session_json is not valid JSON: ${e.message}`); }
 }
 
 const HANDLERS = {
@@ -398,6 +602,73 @@ const HANDLERS = {
     },
 
     evaluate_session: async () => asText(await bridge.evaluateSession()),
+
+    // --- Knowledge / RAG (Gemini File Search) -----------------------------
+    knowledge_status: async () => asText({
+        enabled: geminiFileSearch.isEnabled(),
+        indexing_enabled: geminiFileSearch.isIndexingEnabled(),
+        gemini_configured: geminiFileSearch.isConfigured(),
+        default_store: geminiFileSearch.defaultStoreName() || null,
+        default_model: geminiFileSearch.defaultModelName(),
+        allowed_roots: geminiFileSearch.allowedRoots(),
+        note: !geminiFileSearch.isEnabled()
+            ? "Set ARCUI_ENABLE_KNOWLEDGE_TOOLS=true to enable Gemini File Search tools."
+            : !geminiFileSearch.isConfigured()
+                ? "Set GEMINI_API_KEY or GOOGLE_API_KEY before using knowledge tools."
+                : "Gemini File Search is ready. Set ARCUI_KNOWLEDGE_STORE or pass store_name to query/index.",
+    }),
+
+    create_knowledge_store: async (args = {}) =>
+        asText(await geminiFileSearch.createStore(args)),
+
+    list_knowledge_stores: async () =>
+        asText({ stores: await geminiFileSearch.listStores() }),
+
+    list_knowledge_documents: async (args = {}) =>
+        asText(await geminiFileSearch.listDocuments(args)),
+
+    index_knowledge_file: async (args = {}) => {
+        if (!args?.path) return asError("Parameter 'path' is required.");
+        return asText(await geminiFileSearch.indexFile(args));
+    },
+
+    search_training_knowledge: async (args = {}) => {
+        if (!args?.query) return asError("Parameter 'query' is required.");
+        return asText(await geminiFileSearch.search(args));
+    },
+
+    generate_grounded_scenario: async (args = {}) => {
+        if (!args?.request) return asError("Parameter 'request' is required.");
+
+        const tags = await getLiveTagsForKnowledge();
+        const result = await geminiFileSearch.generateScenario({
+            ...args,
+            tags,
+        });
+
+        if (args.register) {
+            const scenario = result.scenario;
+            result.registration = await bridge.createScenario({
+                id: scenario.id,
+                display_name: scenario.display_name,
+                description: scenario.description,
+                events: scenario.events || [],
+            });
+        }
+
+        return asText(result);
+    },
+
+    generate_training_debrief: async (args = {}) => {
+        const session = args.session_json
+            ? parseOptionalJson(args.session_json)
+            : await bridge.evaluateSession();
+
+        return asText(await geminiFileSearch.generateDebrief({
+            ...args,
+            session,
+        }));
+    },
 };
 
 // ─── Wire up MCP Server ────────────────────────────────────────────────────

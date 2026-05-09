@@ -15,6 +15,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@google/genai": "^1.52.0",
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "license": "UNLICENSED",
