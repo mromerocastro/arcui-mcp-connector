@@ -33,7 +33,7 @@ launches `node src/server.js`:
 GEMINI_API_KEY=your_google_ai_studio_key
 ARCUI_ENABLE_KNOWLEDGE_TOOLS=true
 ARCUI_KNOWLEDGE_STORE=fileSearchStores/your-store-id
-ARCUI_KNOWLEDGE_MODEL=gemini-3-flash-preview
+ARCUI_KNOWLEDGE_MODEL=gemini-2.5-flash
 ARCUI_KNOWLEDGE_EMBEDDING_MODEL=models/gemini-embedding-2
 ```
 
