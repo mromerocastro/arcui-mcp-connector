@@ -82,5 +82,6 @@ export const bridge = {
     startScenario:    (payload)        => request("POST", "/mcp/scenario/start",   { body: payload }),
     listScenarios:    ()               => request("GET",  "/mcp/scenario/list"),
     injectEvent:      (payload)        => request("POST", "/mcp/session/inject",   { body: payload }),
+    sendInstructorMessage: (payload)   => request("POST", "/mcp/session/instructor-message", { body: payload }),
     evaluateSession:  ()               => request("GET",  "/mcp/session/evaluate"),
 };

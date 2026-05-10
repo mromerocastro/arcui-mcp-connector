@@ -275,6 +275,31 @@ const TRAINING_TOOLS = [
             "response carries active=false and an empty events array.",
         inputSchema: { type: "object", properties: {} },
     },
+    {
+        name: "send_instructor_message",
+        description:
+            "Push a coaching message from the instructor into the trainee's SCB chat. The message " +
+            "appears as a distinctly-styled bubble labeled [INSTRUCTOR] (or '[INSTRUCTOR · <name>]' " +
+            "when instructor_name is provided) and is appended to the active training session log " +
+            "for the debrief. Mode-gated: only works when the Unity scene is in Training mode; " +
+            "calls during live Operations are rejected. Use for in-scenario coaching like " +
+            "'verify turbine 2 manually', 'a phone consult is calling', or any role-play injection " +
+            "that mirrors how aviation, medical, and industrial sims coach trainees in real time.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                text: {
+                    type: "string",
+                    description: "Coaching text the trainee will read. Plain text; rendered verbatim.",
+                },
+                instructor_name: {
+                    type: "string",
+                    description: "Optional display name shown next to the INSTRUCTOR label (e.g. 'Marlon'). Recorded in the audit trail.",
+                },
+            },
+            required: ["text"],
+        },
+    },
 ];
 
 const KNOWLEDGE_TOOLS = [
@@ -602,6 +627,14 @@ const HANDLERS = {
     },
 
     evaluate_session: async () => asText(await bridge.evaluateSession()),
+
+    send_instructor_message: async ({ text, instructor_name } = {}) => {
+        if (!text) return asError("Parameter 'text' is required.");
+        return asText(await bridge.sendInstructorMessage({
+            text,
+            instructor_name: instructor_name || "",
+        }));
+    },
 
     // --- Knowledge / RAG (Gemini File Search) -----------------------------
     knowledge_status: async () => asText({
