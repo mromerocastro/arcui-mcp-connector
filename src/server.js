@@ -23,6 +23,17 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { bridge } from "./bridge.js";
 import { geminiFileSearch } from "./gemini-file-search.js";
+import {
+    ValidationError,
+    Patterns,
+    requireString,
+    optionalString,
+    requireNumber,
+    optionalNumber,
+    requireEnum,
+    optionalEnum,
+    optionalBoolean,
+} from "./validation.js";
 
 // ─── Tool Catalog ──────────────────────────────────────────────────────────
 
@@ -555,22 +566,34 @@ function parseOptionalJson(raw, fallback = {}) {
 
 const HANDLERS = {
     // ── Operations ─────────────────────────────────────────────────────────
-    get_sensor_value: async ({ tag }) => {
-        if (!tag) return asError("Parameter 'tag' is required.");
+    get_sensor_value: async (args) => {
+        const tag = requireString(args, "tag", { pattern: Patterns.TAG });
         return asText(await bridge.getTag(tag));
     },
     list_sensors: async () => asText(await bridge.listTags()),
     get_active_alarms: async () => asText(await bridge.activeAlarms()),
-    get_alarm_history: async ({ limit = 50 } = {}) => asText(await bridge.alarmHistory(limit)),
-    trigger_alarm: async (args) => {
-        if (!args?.tag) return asError("Parameter 'tag' is required.");
-        return asText(await bridge.triggerAlarm(args));
+    get_alarm_history: async (args = {}) => {
+        const limit = optionalNumber(args, "limit", { integer: true, min: 1, max: 500 }) ?? 50;
+        return asText(await bridge.alarmHistory(limit));
+    },
+    trigger_alarm: async (args = {}) => {
+        const tag       = requireString(args, "tag", { pattern: Patterns.TAG });
+        const level     = optionalEnum(args, "level", ["info", "warning", "critical"], "warning");
+        const message   = optionalString(args, "message", { maxLen: 2000 });
+        const threshold = optionalNumber(args, "threshold");
+        return asText(await bridge.triggerAlarm({ tag, level, message, threshold }));
     },
     get_system_health: async () => asText(await bridge.health()),
-    generate_report: async (args = {}) => asText(await bridge.report(args)),
+    generate_report: async (args = {}) => {
+        const type         = optionalEnum(args, "type", ["shift", "on-demand", "incident"], "on-demand");
+        const requested_by = optionalString(args, "requested_by", { maxLen: 128 }) ?? "mcp";
+        return asText(await bridge.report({ type, requested_by }));
+    },
 
     // ── Builder (static stubs — Month 4+ of the roadmap) ───────────────────
-    get_protocol_config: async ({ industry, equipment }) => {
+    get_protocol_config: async (args) => {
+        const industry  = requireString(args, "industry",  { maxLen: 64 });
+        const equipment = requireString(args, "equipment", { maxLen: 64 });
         const catalog = {
             "energy/wind-turbine":   { protocol: "MQTT",   broker: "mqtt://broker.local:1883", tags: ["rotor_rpm", "pitch_angle", "wind_speed", "grid_power"] },
             "energy/solar-farm":     { protocol: "MQTT",   broker: "mqtt://broker.local:1883", tags: ["dc_voltage", "inverter_temp", "ac_power", "irradiance"] },
@@ -586,7 +609,8 @@ const HANDLERS = {
         });
     },
 
-    validate_context_layer: async ({ json }) => {
+    validate_context_layer: async (args) => {
+        const json = requireString(args, "json", { maxLen: 1_000_000 });
         const errors = [];
         let parsed;
         try { parsed = JSON.parse(json); }
@@ -605,7 +629,9 @@ const HANDLERS = {
         return asText({ valid: errors.length === 0, errors });
     },
 
-    generate_pilot_scope: async ({ vertical, timeline = "8 weeks" }) => {
+    generate_pilot_scope: async (args) => {
+        const vertical = requireString(args, "vertical", { maxLen: 64 });
+        const timeline = optionalString(args, "timeline", { maxLen: 64 }) ?? "8 weeks";
         const base = {
             vertical,
             timeline,
@@ -626,7 +652,8 @@ const HANDLERS = {
         return asText(base);
     },
 
-    list_available_tags: async ({ vertical }) => {
+    list_available_tags: async (args) => {
+        const vertical = requireString(args, "vertical", { maxLen: 64 });
         const catalogs = {
             energy:     ["rotor_rpm", "pitch_angle", "wind_speed", "grid_power", "dc_voltage", "ac_power", "irradiance"],
             medical:    ["heart_rate", "spo2", "flow_rate", "volume_delivered", "occlusion", "battery_level"],
@@ -642,34 +669,36 @@ const HANDLERS = {
     },
 
     // ── Training (Path C of the Training subsystem) ────────────────────────
-    create_scenario: async (args) => {
-        if (!args?.id) return asError("Parameter 'id' is required.");
-        return asText(await bridge.createScenario(args));
+    create_scenario: async (args = {}) => {
+        const id = requireString(args, "id", { pattern: Patterns.ID, maxLen: 128 });
+        optionalString(args, "display_name", { maxLen: 256 });
+        optionalString(args, "description",  { maxLen: 4000 });
+        if (args.events !== undefined && !Array.isArray(args.events)) {
+            throw new ValidationError("Parameter 'events' must be an array.");
+        }
+        return asText(await bridge.createScenario({ ...args, id }));
     },
 
-    start_scenario: async (args) => {
-        if (!args?.scenario_id) return asError("Parameter 'scenario_id' is required.");
-        return asText(await bridge.startScenario(args));
+    start_scenario: async (args = {}) => {
+        const scenario_id = requireString(args, "scenario_id", { pattern: Patterns.ID, maxLen: 128 });
+        return asText(await bridge.startScenario({ scenario_id }));
     },
 
     list_scenarios: async () => asText(await bridge.listScenarios()),
 
-    inject_event: async (args) => {
-        if (!args?.tag_key)    return asError("Parameter 'tag_key' is required.");
-        if (!args?.value_type) return asError("Parameter 'value_type' is required.");
-        if (args?.raw_value === undefined || args?.raw_value === null)
-            return asError("Parameter 'raw_value' is required.");
-        return asText(await bridge.injectEvent(args));
+    inject_event: async (args = {}) => {
+        const tag_key    = requireString(args, "tag_key", { pattern: Patterns.TAG });
+        const value_type = requireEnum(args, "value_type", ["Float", "Int", "Bool", "String"]);
+        const raw_value  = requireString(args, "raw_value", { maxLen: 8192, allowEmpty: true });
+        return asText(await bridge.injectEvent({ tag_key, value_type, raw_value }));
     },
 
     evaluate_session: async () => asText(await bridge.evaluateSession()),
 
-    send_instructor_message: async ({ text, instructor_name } = {}) => {
-        if (!text) return asError("Parameter 'text' is required.");
-        return asText(await bridge.sendInstructorMessage({
-            text,
-            instructor_name: instructor_name || "",
-        }));
+    send_instructor_message: async (args = {}) => {
+        const text            = requireString(args, "text", { maxLen: 4000 });
+        const instructor_name = optionalString(args, "instructor_name", { maxLen: 128 }) ?? "";
+        return asText(await bridge.sendInstructorMessage({ text, instructor_name }));
     },
 
     // --- Knowledge / RAG (Gemini File Search) -----------------------------
@@ -687,27 +716,47 @@ const HANDLERS = {
                 : "Gemini File Search is ready. Set ARCUI_KNOWLEDGE_STORE or pass store_name to query/index.",
     }),
 
-    create_knowledge_store: async (args = {}) =>
-        asText(await geminiFileSearch.createStore(args)),
+    create_knowledge_store: async (args = {}) => {
+        optionalString(args, "display_name",    { maxLen: 256 });
+        optionalString(args, "embedding_model", { maxLen: 128 });
+        return asText(await geminiFileSearch.createStore(args));
+    },
 
     list_knowledge_stores: async () =>
         asText({ stores: await geminiFileSearch.listStores() }),
 
-    list_knowledge_documents: async (args = {}) =>
-        asText(await geminiFileSearch.listDocuments(args)),
+    list_knowledge_documents: async (args = {}) => {
+        optionalString(args, "store_name", { maxLen: 256 });
+        return asText(await geminiFileSearch.listDocuments(args));
+    },
 
     index_knowledge_file: async (args = {}) => {
-        if (!args?.path) return asError("Parameter 'path' is required.");
+        requireString(args, "path", { maxLen: 4096 });
+        optionalString(args, "store_name",   { maxLen: 256 });
+        optionalString(args, "display_name", { maxLen: 256 });
+        optionalNumber(args, "max_tokens_per_chunk", { integer: true, min: 1 });
+        optionalNumber(args, "max_overlap_tokens",   { integer: true, min: 0 });
+        optionalBoolean(args, "wait");
         return asText(await geminiFileSearch.indexFile(args));
     },
 
     search_training_knowledge: async (args = {}) => {
-        if (!args?.query) return asError("Parameter 'query' is required.");
+        requireString(args, "query", { maxLen: 4000 });
+        optionalString(args, "store_name",      { maxLen: 256 });
+        optionalString(args, "metadata_filter", { maxLen: 1000 });
+        optionalString(args, "instruction",     { maxLen: 2000 });
+        optionalString(args, "model",           { maxLen: 128 });
         return asText(await geminiFileSearch.search(args));
     },
 
     generate_grounded_scenario: async (args = {}) => {
-        if (!args?.request) return asError("Parameter 'request' is required.");
+        requireString(args, "request", { maxLen: 4000 });
+        optionalString(args, "system",          { maxLen: 256 });
+        optionalString(args, "constraints",     { maxLen: 2000 });
+        optionalString(args, "store_name",      { maxLen: 256 });
+        optionalString(args, "metadata_filter", { maxLen: 1000 });
+        optionalString(args, "model",           { maxLen: 128 });
+        optionalBoolean(args, "register");
 
         const tags = await getLiveTagsForKnowledge();
         const result = await geminiFileSearch.generateScenario({
@@ -729,6 +778,12 @@ const HANDLERS = {
     },
 
     generate_training_debrief: async (args = {}) => {
+        optionalString(args, "request",         { maxLen: 4000 });
+        optionalString(args, "session_json",    { maxLen: 1_000_000 });
+        optionalString(args, "store_name",      { maxLen: 256 });
+        optionalString(args, "metadata_filter", { maxLen: 1000 });
+        optionalString(args, "model",           { maxLen: 128 });
+
         const session = args.session_json
             ? parseOptionalJson(args.session_json)
             : await bridge.evaluateSession();
@@ -742,13 +797,13 @@ const HANDLERS = {
     // ── TimeMachine (playback control) ───────────────────────────────────────
     timemachine_play: async () => asText(await bridge.timeMachinePlay()),
     timemachine_pause: async () => asText(await bridge.timeMachinePause()),
-    timemachine_seek: async ({ target_time }) => {
-        if (target_time === undefined) return asError("Parameter 'target_time' is required.");
+    timemachine_seek: async (args) => {
+        const target_time = requireNumber(args, "target_time", { min: 0 });
         return asText(await bridge.timeMachineSeek(target_time));
     },
-    timemachine_forecast: async ({ tag, lookahead_seconds }) => {
-        if (!tag) return asError("Parameter 'tag' is required.");
-        if (lookahead_seconds === undefined) return asError("Parameter 'lookahead_seconds' is required.");
+    timemachine_forecast: async (args) => {
+        const tag               = requireString(args, "tag", { pattern: Patterns.TAG });
+        const lookahead_seconds = requireNumber(args, "lookahead_seconds", { min: 0 });
         return asText(await bridge.timeMachineForecast(tag, lookahead_seconds));
     },
 };
@@ -769,7 +824,10 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     if (!handler) return asError(`Unknown tool: ${name}`);
 
     try { return await handler(args); }
-    catch (e)   { return asError(`${name} failed: ${e.message}`); }
+    catch (e) {
+        if (e instanceof ValidationError) return asError(e.message);
+        return asError(`${name} failed: ${e.message}`);
+    }
 });
 
 // ─── Startup ───────────────────────────────────────────────────────────────

@@ -6,6 +6,53 @@ This acts as a standard MCP Server (stdio) that bridges external AI clients (lik
 ## ⚠️ Important Note
 This connector is an **optional add-on** for advanced users. The core ArcUI System (including the ARIA Agentic Panel) works natively inside Unity and does *not* require Node.js or this connector to function.
 
+## Security model
+
+This connector runs as a **stdio MCP server** — it is launched by your MCP client
+(Claude Desktop, Cursor, Windsurf, etc.) and speaks to that client over the client's
+standard input/output. The connector itself does **not** open inbound network sockets
+and does **not** persist state between runs. It is a stateless translator.
+
+| Hop | Trust | Protection |
+| --- | --- | --- |
+| MCP client ↔ connector | Same machine, same OS user, stdio pipe | OS process isolation |
+| Connector ↔ Unity bridge | Loopback `http://localhost:17842` by default | Optional `ARCUI_BRIDGE_TOKEN` bearer (recommended) |
+| Connector ↔ Gemini File Search | External, only when explicitly enabled | `GEMINI_API_KEY` + `ARCUI_ENABLE_KNOWLEDGE_TOOLS=true` |
+
+### Input validation
+
+Every tool parameter is validated at the server boundary (`src/validation.js`) before
+any call reaches the Unity bridge or Gemini. The validator enforces:
+
+- **Type** — each parameter is checked against its declared kind (string, number,
+  boolean, enum). Mismatched types are rejected.
+- **Length** — every string has a bounded ceiling (256 chars default, 4 KB for
+  free-form prompts, 8 KB for `raw_value`, 1 MB for `session_json`/`json` blobs).
+- **Identifier character set** — `tag`, `tag_key`, `id`, and `scenario_id` accept
+  `A-Z a-z 0-9 _ . - : / [ ]`. This covers `System.ActiveView` (ArcUI conventions),
+  MQTT topics (`factory/line1/temp`), and OPC-UA / DCS addressing
+  (`Channel1.Device1[0]`). Spaces, quotes, `<`, `>`, `;`, `$`, and other
+  injection-style characters are rejected as defense in depth — URL and JSON
+  encoding on the wire already handle the allowed characters safely.
+- **Enum membership** — `level`, `value_type`, `type`, and similar fields only
+  accept their documented values.
+- **Numeric bounds** — limits like `1 ≤ limit ≤ 500` and `lookahead_seconds ≥ 0`
+  are enforced before the bridge call.
+
+Validation errors return a clean, parameter-named message and **never echo the
+bad value back to the client**, so an attacker payload cannot reflect off the
+error path. Unknown fields on state-changing tools are dropped: only the
+documented schema reaches the Unity bridge.
+
+### Operational guidance
+
+- Set `ARCUI_BRIDGE_TOKEN` in production and keep it out of source control.
+- Keep the Unity bridge bound to loopback (`localhostOnly = true` on
+  `ArcHMIMcpBridge`). Do not expose port `17842` to untrusted or public networks.
+- Treat `GEMINI_API_KEY` like any other API credential — rotate on suspicion,
+  scope to the minimum project, and review File Search store contents before
+  enabling for regulated deployments.
+
 ## Prerequisites
 *   [Node.js](https://nodejs.org/) installed on your system.
 *   An active ArcUI System project running in the Unity Editor or a standalone build.
@@ -32,7 +79,7 @@ The TimeMachine tools allow AI agents to navigate historical telemetry and predi
 - `timemachine_seek`: Jump to a specific timestamp in the scenario (in seconds).
 - `timemachine_forecast`: Predict the future value of a specific tag by looking ahead in the pre-loaded telemetry.
 
-> **Security Note:** All tool interactions, including TimeMachine and Training injections, are protected by the `ARCUI_BRIDGE_TOKEN` authentication mechanism. Ensure your token is securely stored in your MCP client configuration and never expose the Unity bridge port (`17842` by default) to untrusted or public networks.
+> **Security Note:** TimeMachine and Training injections write to the live DataStore and therefore inherit the bridge's auth posture. When `ARCUI_BRIDGE_TOKEN` is set, every tool call to the Unity bridge must present a matching bearer token; when it is unset, `ArcHMIMcpBridge` rejects all requests by default (`allowUnauthenticated = false`). Keep the bridge bound to loopback and the token out of source control. See the [Security model](#security-model) section for the full trust picture.
 
 ## Gemini File Search MVP
 
