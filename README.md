@@ -89,6 +89,42 @@ The TimeMachine tools allow AI agents to navigate historical telemetry and predi
 
 > **Security Note:** TimeMachine and Training injections write to the live DataStore and therefore inherit the bridge's auth posture. When `ARCUI_BRIDGE_TOKEN` is set, every tool call to the Unity bridge must present a matching bearer token; when it is unset, `ArcHMIMcpBridge` rejects all requests by default (`allowUnauthenticated = false`). Keep the bridge bound to loopback and the token out of source control. See the [Security model](#security-model) section for the full trust picture.
 
+## Protocol handshake
+
+On startup the connector calls `GET /mcp/schema` against the configured bridge
+to negotiate the wire-protocol version and discover which features the bridge
+actually supports. Behavior:
+
+- **Compatible bridge (matching protocol MAJOR)** — the connector caches the
+  reported `capabilities` and **filters the tool catalog** advertised to the
+  MCP client. Tools that depend on a disabled capability are hidden so the
+  client never tries to call something the bridge cannot execute. For example
+  a bridge built without TimeMachine wiring would advertise
+  `timemachine: false`, and `timemachine_*` tools would not appear in the
+  client's tool list.
+- **Legacy bridge (no `/mcp/schema` endpoint, returns 404)** — the connector
+  logs a warning and proceeds with a permissive default (`protocol 1.0.0`,
+  all capabilities enabled). This keeps installations from before the
+  handshake landed working.
+- **Unreachable bridge (timeout, ECONNREFUSED)** — the connector logs a
+  warning and proceeds with the same permissive default. Tool calls will
+  surface a clear error when actually invoked. This matches the prior
+  behavior where the MCP client could be launched before Unity Play Mode.
+- **Incompatible protocol (MAJOR mismatch)** — FATAL. The connector exits
+  with a clear message telling the operator to update either
+  `ArcHMIMcpBridge.PROTOCOL_VERSION` on the Unity side or the connector.
+  Continuing would expose tools that may have changed wire shapes.
+
+The connector's startup line on stderr now reports the negotiated protocol
+alongside the bridge URL, e.g.:
+
+```
+[arcui-mcp] ready — bridge=http://localhost:17842 protocol=1.0.0 auth=on tools=21
+```
+
+When running against a legacy bridge the suffix `(legacy)` is appended so the
+operator knows capability filtering is not active.
+
 ## Idempotency
 
 State-changing tools accept an optional `idempotency_key` string parameter so a

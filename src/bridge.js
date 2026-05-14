@@ -14,7 +14,33 @@
  *                                 a non-loopback host. Use only on a trusted
  *                                 private link (e.g., a VPN tunnel) where TLS
  *                                 is terminated at the network layer.
+ *
+ * Protocol versioning:
+ *   The bridge advertises its wire-protocol version via GET /mcp/schema. This
+ *   client supports MAJOR == SUPPORTED_PROTOCOL_MAJOR. A handshake at startup
+ *   surfaces incompatibilities with a clear error before any tool call lands.
  */
+
+// Wire-protocol MAJOR version this connector is built against. Must match the
+// MAJOR of ArcHMIMcpBridge.PROTOCOL_VERSION on the Unity side. Bump together
+// with the bridge when a breaking change is made to any endpoint's JSON shape.
+export const SUPPORTED_PROTOCOL_MAJOR = 1;
+
+// Fallback assumed when the bridge has no /mcp/schema endpoint (legacy
+// installations from before the handshake landed). All capabilities default
+// to true so existing tool catalogs continue to work.
+const LEGACY_FALLBACK = Object.freeze({
+    bridge_version:   "unknown",
+    protocol_version: "1.0.0",
+    capabilities: Object.freeze({
+        alarms:              true,
+        reports:             true,
+        training:            true,
+        instructor_messages: true,
+        timemachine:         true,
+    }),
+    _legacy: true,
+});
 
 function resolveSecureBaseUrl() {
     const raw = (process.env.ARCUI_BRIDGE_URL || "http://localhost:17842").replace(/\/+$/, "");
@@ -113,10 +139,73 @@ async function request(method, path, { query, body } = {}) {
     }
 }
 
+/**
+ * Performs the protocol handshake against the bridge.
+ *
+ * Sequence:
+ *   1. GET /mcp/schema
+ *   2. If 404 → assume legacy bridge (pre-handshake), log a warning, return
+ *      a permissive default so the connector keeps working.
+ *   3. If any other error (timeout, ECONNREFUSED) → propagate to caller; the
+ *      connector treats handshake failure as FATAL.
+ *   4. Parse protocol_version. Major mismatch → throw with a clear message so
+ *      the caller can exit before exposing any tool to the MCP client.
+ *
+ * Returns the schema document. Caller is expected to cache it for the
+ * process lifetime.
+ */
+export async function handshake() {
+    let schema;
+    try {
+        schema = await request("GET", "/mcp/schema");
+    } catch (err) {
+        if (/Bridge 404/.test(err.message)) {
+            process.stderr.write(
+                `[arcui-mcp] WARNING: bridge has no /mcp/schema endpoint. ` +
+                `Assuming legacy protocol ${LEGACY_FALLBACK.protocol_version} with all capabilities enabled. ` +
+                `Update the SDK to enable capability-aware tool filtering.\n`,
+            );
+            return LEGACY_FALLBACK;
+        }
+        // Network failures: the bridge isn't up yet. Don't block startup — the
+        // MCP client may have been launched before Unity Play Mode. Individual
+        // tool calls will surface a clear error when actually invoked.
+        if (/Bridge request timed out|Cannot reach ArcUI bridge/.test(err.message)) {
+            process.stderr.write(
+                `[arcui-mcp] WARNING: bridge unreachable at handshake (${err.message}). ` +
+                `Continuing with permissive tool catalog; tool calls will fail until ` +
+                `the bridge becomes reachable.\n`,
+            );
+            return LEGACY_FALLBACK;
+        }
+        throw err;
+    }
+
+    const remoteVersion = String(schema.protocol_version || "");
+    const remoteMajor = parseInt(remoteVersion.split(".")[0], 10);
+    if (!Number.isFinite(remoteMajor)) {
+        throw new Error(
+            `Bridge returned an unparseable protocol_version: '${remoteVersion}'.`,
+        );
+    }
+    if (remoteMajor !== SUPPORTED_PROTOCOL_MAJOR) {
+        throw new Error(
+            `Bridge protocol ${remoteVersion} is incompatible with this connector ` +
+            `(supports MAJOR=${SUPPORTED_PROTOCOL_MAJOR}.x). ` +
+            `Update either ArcHMIMcpBridge.PROTOCOL_VERSION on the Unity side ` +
+            `or the connector to match.`,
+        );
+    }
+
+    return schema;
+}
+
 export const bridge = {
     baseUrl: BASE_URL,
     hasAuth: Boolean(TOKEN),
 
+    handshake,
+    schema:         ()                 => request("GET",  "/mcp/schema"),
     ping:           ()                 => request("GET",  "/mcp/ping"),
     stats:          ()                 => request("GET",  "/mcp/stats"),
     listTags:       ()                 => request("GET",  "/mcp/tags"),

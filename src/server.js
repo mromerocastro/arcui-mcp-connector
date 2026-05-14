@@ -576,7 +576,53 @@ const ACTIVE_KNOWLEDGE_TOOLS = geminiFileSearch.isEnabled()
     ? KNOWLEDGE_TOOLS
     : KNOWLEDGE_TOOLS.filter((t) => t.name === "knowledge_status");
 
-const ALL_TOOLS = [...OPERATIONS_TOOLS, ...BUILDER_TOOLS, ...TRAINING_TOOLS, ...TIMEMACHINE_TOOLS, ...ACTIVE_KNOWLEDGE_TOOLS];
+const FULL_TOOL_CATALOG = [
+    ...OPERATIONS_TOOLS,
+    ...BUILDER_TOOLS,
+    ...TRAINING_TOOLS,
+    ...TIMEMACHINE_TOOLS,
+    ...ACTIVE_KNOWLEDGE_TOOLS,
+];
+
+// Maps each tool name to the bridge capability flag it requires. Tools not
+// present in the map are considered core (always available) or client-side
+// stubs (no bridge call). The bridge advertises capabilities via the schema
+// handshake (GET /mcp/schema); see SDK PROTOCOL_VERSION.
+const TOOL_CAPABILITY = {
+    // Operations
+    "get_active_alarms":       "alarms",
+    "get_alarm_history":       "alarms",
+    "trigger_alarm":           "alarms",
+    "generate_report":         "reports",
+
+    // Training
+    "create_scenario":         "training",
+    "start_scenario":          "training",
+    "list_scenarios":          "training",
+    "inject_event":            "training",
+    "evaluate_session":        "training",
+    "send_instructor_message": "instructor_messages",
+
+    // TimeMachine
+    "timemachine_play":        "timemachine",
+    "timemachine_pause":       "timemachine",
+    "timemachine_seek":        "timemachine",
+    "timemachine_forecast":    "timemachine",
+};
+
+function filterToolsByCapabilities(tools, capabilities) {
+    return tools.filter((t) => {
+        const required = TOOL_CAPABILITY[t.name];
+        if (!required) return true;
+        return capabilities[required] === true;
+    });
+}
+
+// `let` so the handshake at startup can replace the full catalog with the
+// capability-filtered subset before the MCP client sees the tool list. The
+// ListToolsRequestSchema handler captures this binding, not a snapshot, so
+// reassignment is picked up by every subsequent listTools call.
+let ALL_TOOLS = FULL_TOOL_CATALOG;
 
 // ─── Tool Handlers ─────────────────────────────────────────────────────────
 
@@ -881,11 +927,27 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
 // ─── Startup ───────────────────────────────────────────────────────────────
 
+// Bridge handshake — runs before server.connect() so the tool catalog exposed
+// to the MCP client reflects the bridge's advertised capabilities. Recoverable
+// failures (404 on /mcp/schema, network unreachable) fall back to a permissive
+// catalog with a stderr warning; only protocol incompatibility is FATAL.
+let bridgeSchema;
+try {
+    bridgeSchema = await bridge.handshake();
+} catch (err) {
+    process.stderr.write(`[arcui-mcp] FATAL handshake: ${err.message}\n`);
+    process.exit(1);
+}
+
+ALL_TOOLS = filterToolsByCapabilities(FULL_TOOL_CATALOG, bridgeSchema.capabilities || {});
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
 // MCP spec: servers MUST NOT write to stdout (reserved for JSON-RPC).
 // Diagnostic logs go to stderr.
 process.stderr.write(
-    `[arcui-mcp] ready — bridge=${bridge.baseUrl} auth=${bridge.hasAuth ? "on" : "off"} tools=${ALL_TOOLS.length}\n`,
+    `[arcui-mcp] ready — bridge=${bridge.baseUrl} ` +
+    `protocol=${bridgeSchema.protocol_version}${bridgeSchema._legacy ? " (legacy)" : ""} ` +
+    `auth=${bridge.hasAuth ? "on" : "off"} tools=${ALL_TOOLS.length}\n`,
 );
