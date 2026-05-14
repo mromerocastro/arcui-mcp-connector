@@ -34,6 +34,18 @@ import {
     optionalEnum,
     optionalBoolean,
 } from "./validation.js";
+import { withIdempotency } from "./idempotency.js";
+
+// Tools whose effect persists in Unity (alarm registration, scenario
+// authoring/playback, event injection). Clients can pass an optional
+// 'idempotency_key' on these calls; retries within the cache TTL return
+// the cached response instead of re-executing the handler.
+const IDEMPOTENT_TOOLS = new Set([
+    "trigger_alarm",
+    "create_scenario",
+    "start_scenario",
+    "inject_event",
+]);
 
 // ─── Tool Catalog ──────────────────────────────────────────────────────────
 
@@ -98,6 +110,13 @@ const OPERATIONS_TOOLS = [
                 level:     { type: "string", enum: ["info", "warning", "critical"], default: "warning" },
                 message:   { type: "string", description: "Human-readable alarm message. Supports {tag} and {value} placeholders." },
                 threshold: { type: "number", description: "Threshold value that triggered this alarm (optional, informational)." },
+                idempotency_key: {
+                    type: "string",
+                    maxLength: 256,
+                    description: "Optional client-supplied dedup key. When set, a successful response is cached " +
+                                 "for 5 minutes; subsequent calls with the same key return the cached response " +
+                                 "without re-executing the handler.",
+                },
             },
             required: ["tag"],
         },
@@ -235,6 +254,13 @@ const TRAINING_TOOLS = [
                         required: ["tag_key", "value_type", "raw_value"],
                     },
                 },
+                idempotency_key: {
+                    type: "string",
+                    maxLength: 256,
+                    description: "Optional client-supplied dedup key. When set, a successful response is cached " +
+                                 "for 5 minutes; subsequent calls with the same key return the cached response " +
+                                 "without re-executing the handler.",
+                },
             },
             required: ["id"],
         },
@@ -249,6 +275,13 @@ const TRAINING_TOOLS = [
             type: "object",
             properties: {
                 scenario_id: { type: "string", description: "Id returned by 'create_scenario'." },
+                idempotency_key: {
+                    type: "string",
+                    maxLength: 256,
+                    description: "Optional client-supplied dedup key. When set, a successful response is cached " +
+                                 "for 5 minutes; subsequent calls with the same key return the cached response " +
+                                 "without re-executing the handler.",
+                },
             },
             required: ["scenario_id"],
         },
@@ -273,6 +306,13 @@ const TRAINING_TOOLS = [
                 tag_key:    { type: "string",  description: "DataStore tag key to write." },
                 value_type: { type: "string", enum: ["Float", "Int", "Bool", "String"], default: "Float" },
                 raw_value:  { type: "string",  description: "Value as a string. Parsed via InvariantCulture by ArcUI." },
+                idempotency_key: {
+                    type: "string",
+                    maxLength: 256,
+                    description: "Optional client-supplied dedup key. When set, a successful response is cached " +
+                                 "for 5 minutes; subsequent calls with the same key return the cached response " +
+                                 "without re-executing the handler.",
+                },
             },
             required: ["tag_key", "value_type", "raw_value"],
         },
@@ -823,8 +863,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const handler = HANDLERS[name];
     if (!handler) return asError(`Unknown tool: ${name}`);
 
-    try { return await handler(args); }
-    catch (e) {
+    try {
+        if (IDEMPOTENT_TOOLS.has(name)) {
+            // Extract and validate the dedup key BEFORE the handler runs so a
+            // malformed key surfaces as a clean ValidationError rather than
+            // poisoning the cache with a junk identifier.
+            const idempotency_key = optionalString(args, "idempotency_key", { maxLen: 256 });
+            const { idempotency_key: _omit, ...rest } = args;
+            return await withIdempotency(name, idempotency_key, () => handler(rest));
+        }
+        return await handler(args);
+    } catch (e) {
         if (e instanceof ValidationError) return asError(e.message);
         return asError(`${name} failed: ${e.message}`);
     }

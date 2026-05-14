@@ -81,6 +81,52 @@ The TimeMachine tools allow AI agents to navigate historical telemetry and predi
 
 > **Security Note:** TimeMachine and Training injections write to the live DataStore and therefore inherit the bridge's auth posture. When `ARCUI_BRIDGE_TOKEN` is set, every tool call to the Unity bridge must present a matching bearer token; when it is unset, `ArcHMIMcpBridge` rejects all requests by default (`allowUnauthenticated = false`). Keep the bridge bound to loopback and the token out of source control. See the [Security model](#security-model) section for the full trust picture.
 
+## Idempotency
+
+State-changing tools accept an optional `idempotency_key` string parameter so a
+flaky network or a client-side retry does not produce duplicate side-effects in
+Unity. Tools that honor the key:
+
+- `trigger_alarm`
+- `create_scenario`
+- `start_scenario`
+- `inject_event`
+
+When a call carries an `idempotency_key`, the first execution runs normally and
+the successful response is cached for **5 minutes** under
+`<tool_name>:<key>`. Any subsequent call with the same key within that window
+returns the cached response **without re-executing the handler** — no second
+write to the Unity DataStore. Concurrent in-flight calls with the same key
+collapse onto a single bridge round-trip.
+
+Behavior details:
+
+- **Failures are not cached.** If a call returns an error, the entry is evicted
+  immediately so the client can retry with the same key and obtain a fresh
+  attempt.
+- **Process-local only.** The cache lives in this Node process. A connector
+  restart clears it; a key submitted after restart falls through and executes.
+  For longer-horizon guarantees, the destination system must also be defensive.
+- **Bounded memory.** Cache is capped at 256 entries with LRU eviction. No
+  references to Unity DataStore tags, alarms, or sessions are retained beyond
+  the cached MCP response payload.
+- **Opt-in.** Tools without `idempotency_key` behave exactly as before; this is
+  purely additive.
+
+Example client usage:
+
+```json
+{
+    "tool": "trigger_alarm",
+    "arguments": {
+        "tag": "Reactor.Temperature",
+        "level": "critical",
+        "message": "Temperature exceeded safety bound",
+        "idempotency_key": "incident-2026-05-14-001"
+    }
+}
+```
+
 ## Gemini File Search MVP
 
 This connector can expose ArcUI Knowledge Pack tools backed by Gemini File Search.
