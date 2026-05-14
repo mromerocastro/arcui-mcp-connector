@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "check-bridge": "node src/check-bridge.js"
+    "check-bridge": "node src/check-bridge.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18"

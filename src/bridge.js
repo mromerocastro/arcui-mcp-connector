@@ -42,49 +42,74 @@ const LEGACY_FALLBACK = Object.freeze({
     _legacy: true,
 });
 
-function resolveSecureBaseUrl() {
-    const raw = (process.env.ARCUI_BRIDGE_URL || "http://localhost:17842").replace(/\/+$/, "");
-    const allowInsecure = process.env.ARCUI_BRIDGE_ALLOW_INSECURE === "true";
+/**
+ * Pure URL guard. Decides whether `rawUrl` is acceptable as the bridge target
+ * given the operator's `allowInsecure` opt-in. Returns either:
+ *   { ok: true,  url, warning? }   — proceed (warning is non-fatal advisory)
+ *   { ok: false, error }           — caller must abort
+ *
+ * Kept side-effect free so the suite in test/bridge-url-guard.test.js can
+ * exercise every branch without spawning child processes.
+ */
+export function evaluateBridgeUrl(rawUrl, { allowInsecure = false } = {}) {
+    const raw = String(rawUrl || "").replace(/\/+$/, "");
 
     let parsed;
     try { parsed = new URL(raw); }
     catch {
-        process.stderr.write(
-            `[arcui-mcp] FATAL: ARCUI_BRIDGE_URL is not a valid URL: '${raw}'.\n`,
-        );
-        process.exit(1);
-    }
-
-    const host = parsed.hostname.toLowerCase();
-    const isLoopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
-
-    if (parsed.protocol === "http:" && !isLoopback && !allowInsecure) {
-        process.stderr.write(
-            `[arcui-mcp] FATAL: Refusing to use ARCUI_BRIDGE_URL='${raw}'. ` +
-            `Plain HTTP to a non-loopback host would send the bearer token and ` +
-            `all DataStore traffic in cleartext. Use https://, or set ` +
-            `ARCUI_BRIDGE_ALLOW_INSECURE=true if this is a trusted private link ` +
-            `(e.g., a VPN tunnel) and you accept the risk.\n`,
-        );
-        process.exit(1);
-    }
-
-    if (parsed.protocol === "http:" && !isLoopback && allowInsecure) {
-        process.stderr.write(
-            `[arcui-mcp] WARNING: ARCUI_BRIDGE_ALLOW_INSECURE=true. ` +
-            `Sending bearer token in cleartext to ${parsed.host}. ` +
-            `Only do this on a trusted private link.\n`,
-        );
+        return { ok: false, error: `ARCUI_BRIDGE_URL is not a valid URL: '${raw}'.` };
     }
 
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        process.stderr.write(
-            `[arcui-mcp] FATAL: ARCUI_BRIDGE_URL must use http:// or https://, got '${parsed.protocol}'.\n`,
-        );
-        process.exit(1);
+        return { ok: false, error: `ARCUI_BRIDGE_URL must use http:// or https://, got '${parsed.protocol}'.` };
     }
 
-    return raw;
+    // WHATWG URL returns IPv6 hostnames with literal brackets (e.g. "[::1]").
+    // Strip them so the comparison hits "::1" as expected.
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    const isLoopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
+
+    if (parsed.protocol === "http:" && !isLoopback && !allowInsecure) {
+        return {
+            ok: false,
+            error:
+                `Refusing to use ARCUI_BRIDGE_URL='${raw}'. ` +
+                `Plain HTTP to a non-loopback host would send the bearer token and ` +
+                `all DataStore traffic in cleartext. Use https://, or set ` +
+                `ARCUI_BRIDGE_ALLOW_INSECURE=true if this is a trusted private link ` +
+                `(e.g., a VPN tunnel) and you accept the risk.`,
+        };
+    }
+
+    let warning;
+    if (parsed.protocol === "http:" && !isLoopback && allowInsecure) {
+        warning =
+            `ARCUI_BRIDGE_ALLOW_INSECURE=true. ` +
+            `Sending bearer token in cleartext to ${parsed.host}. ` +
+            `Only do this on a trusted private link.`;
+    }
+
+    return { ok: true, url: raw, warning };
+}
+
+// Thin module-level wrapper: applies the pure guard against the current env
+// and either returns the validated URL or terminates the process. The exit
+// path is intentionally outside evaluateBridgeUrl so the latter stays unit-
+// testable without spawning child processes.
+function resolveSecureBaseUrl() {
+    const result = evaluateBridgeUrl(
+        process.env.ARCUI_BRIDGE_URL || "http://localhost:17842",
+        { allowInsecure: process.env.ARCUI_BRIDGE_ALLOW_INSECURE === "true" },
+    );
+
+    if (!result.ok) {
+        process.stderr.write(`[arcui-mcp] FATAL: ${result.error}\n`);
+        process.exit(1);
+    }
+    if (result.warning) {
+        process.stderr.write(`[arcui-mcp] WARNING: ${result.warning}\n`);
+    }
+    return result.url;
 }
 
 const BASE_URL = resolveSecureBaseUrl();

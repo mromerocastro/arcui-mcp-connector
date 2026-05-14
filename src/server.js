@@ -35,6 +35,7 @@ import {
     optionalBoolean,
 } from "./validation.js";
 import { withIdempotency } from "./idempotency.js";
+import { filterToolsByCapabilities } from "./tools-filter.js";
 
 // Tools whose effect persists in Unity (alarm registration, scenario
 // authoring/playback, event injection). Clients can pass an optional
@@ -583,40 +584,6 @@ const FULL_TOOL_CATALOG = [
     ...TIMEMACHINE_TOOLS,
     ...ACTIVE_KNOWLEDGE_TOOLS,
 ];
-
-// Maps each tool name to the bridge capability flag it requires. Tools not
-// present in the map are considered core (always available) or client-side
-// stubs (no bridge call). The bridge advertises capabilities via the schema
-// handshake (GET /mcp/schema); see SDK PROTOCOL_VERSION.
-const TOOL_CAPABILITY = {
-    // Operations
-    "get_active_alarms":       "alarms",
-    "get_alarm_history":       "alarms",
-    "trigger_alarm":           "alarms",
-    "generate_report":         "reports",
-
-    // Training
-    "create_scenario":         "training",
-    "start_scenario":          "training",
-    "list_scenarios":          "training",
-    "inject_event":            "training",
-    "evaluate_session":        "training",
-    "send_instructor_message": "instructor_messages",
-
-    // TimeMachine
-    "timemachine_play":        "timemachine",
-    "timemachine_pause":       "timemachine",
-    "timemachine_seek":        "timemachine",
-    "timemachine_forecast":    "timemachine",
-};
-
-function filterToolsByCapabilities(tools, capabilities) {
-    return tools.filter((t) => {
-        const required = TOOL_CAPABILITY[t.name];
-        if (!required) return true;
-        return capabilities[required] === true;
-    });
-}
 
 // `let` so the handshake at startup can replace the full catalog with the
 // capability-filtered subset before the MCP client sees the tool list. The

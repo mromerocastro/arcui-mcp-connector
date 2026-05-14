@@ -44,6 +44,32 @@ bad value back to the client**, so an attacker payload cannot reflect off the
 error path. Unknown fields on state-changing tools are dropped: only the
 documented schema reaches the Unity bridge.
 
+### Testing
+
+The connector ships a `node:test` suite with **zero new dependencies** — it
+uses only Node's built-in test runner and assertion library. Run from the
+repo root:
+
+```bash
+npm test
+```
+
+Coverage targets every hardening layer from this audit:
+
+- `validation.js` — every helper, boundary, and the `Patterns.TAG` allow /
+  reject set (injection-style payloads are explicitly rejected).
+- `idempotency.js` — cache hit/miss, TTL/LRU bounds, failure eviction,
+  concurrent-call collapsing.
+- `bridge.js` — URL guard (`evaluateBridgeUrl`) across loopback, external
+  HTTP, ALLOW_INSECURE, HTTPS, and bad schemes; protocol handshake across
+  the 5 wire scenarios (matching, legacy 404, incompatible MAJOR,
+  unreachable bridge, unparseable version).
+- `tools-filter.js` — capability-driven tool filtering with full / partial /
+  empty / null / coerced inputs.
+
+The suite uses real loopback HTTP servers on ephemeral ports for handshake
+scenarios — higher fidelity than mocks and zero supply-chain cost.
+
 ### Operational guidance
 
 - Set `ARCUI_BRIDGE_TOKEN` in production and keep it out of source control.
