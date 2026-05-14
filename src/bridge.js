@@ -6,12 +6,62 @@
  * stays stateless and testable.
  *
  * Configuration via environment variables:
- *   ARCUI_BRIDGE_URL    default: http://localhost:17842
- *   ARCUI_BRIDGE_TOKEN  optional: must match ArcHMIMcpBridge.authToken
- *   ARCUI_BRIDGE_TIMEOUT_MS  default: 5000
+ *   ARCUI_BRIDGE_URL              default: http://localhost:17842
+ *   ARCUI_BRIDGE_TOKEN            optional: must match ArcHMIMcpBridge.authToken
+ *   ARCUI_BRIDGE_TIMEOUT_MS       default: 5000
+ *   ARCUI_BRIDGE_ALLOW_INSECURE   default: false
+ *                                 Opt-in override that allows plain http:// to
+ *                                 a non-loopback host. Use only on a trusted
+ *                                 private link (e.g., a VPN tunnel) where TLS
+ *                                 is terminated at the network layer.
  */
 
-const BASE_URL = (process.env.ARCUI_BRIDGE_URL || "http://localhost:17842").replace(/\/+$/, "");
+function resolveSecureBaseUrl() {
+    const raw = (process.env.ARCUI_BRIDGE_URL || "http://localhost:17842").replace(/\/+$/, "");
+    const allowInsecure = process.env.ARCUI_BRIDGE_ALLOW_INSECURE === "true";
+
+    let parsed;
+    try { parsed = new URL(raw); }
+    catch {
+        process.stderr.write(
+            `[arcui-mcp] FATAL: ARCUI_BRIDGE_URL is not a valid URL: '${raw}'.\n`,
+        );
+        process.exit(1);
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    const isLoopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
+
+    if (parsed.protocol === "http:" && !isLoopback && !allowInsecure) {
+        process.stderr.write(
+            `[arcui-mcp] FATAL: Refusing to use ARCUI_BRIDGE_URL='${raw}'. ` +
+            `Plain HTTP to a non-loopback host would send the bearer token and ` +
+            `all DataStore traffic in cleartext. Use https://, or set ` +
+            `ARCUI_BRIDGE_ALLOW_INSECURE=true if this is a trusted private link ` +
+            `(e.g., a VPN tunnel) and you accept the risk.\n`,
+        );
+        process.exit(1);
+    }
+
+    if (parsed.protocol === "http:" && !isLoopback && allowInsecure) {
+        process.stderr.write(
+            `[arcui-mcp] WARNING: ARCUI_BRIDGE_ALLOW_INSECURE=true. ` +
+            `Sending bearer token in cleartext to ${parsed.host}. ` +
+            `Only do this on a trusted private link.\n`,
+        );
+    }
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        process.stderr.write(
+            `[arcui-mcp] FATAL: ARCUI_BRIDGE_URL must use http:// or https://, got '${parsed.protocol}'.\n`,
+        );
+        process.exit(1);
+    }
+
+    return raw;
+}
+
+const BASE_URL = resolveSecureBaseUrl();
 const TOKEN = process.env.ARCUI_BRIDGE_TOKEN || "";
 const TIMEOUT_MS = parseInt(process.env.ARCUI_BRIDGE_TIMEOUT_MS || "5000", 10);
 

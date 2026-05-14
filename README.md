@@ -16,7 +16,7 @@ and does **not** persist state between runs. It is a stateless translator.
 | Hop | Trust | Protection |
 | --- | --- | --- |
 | MCP client ↔ connector | Same machine, same OS user, stdio pipe | OS process isolation |
-| Connector ↔ Unity bridge | Loopback `http://localhost:17842` by default | Optional `ARCUI_BRIDGE_TOKEN` bearer (recommended) |
+| Connector ↔ Unity bridge | Loopback `http://localhost:17842` by default. Plain HTTP to a non-loopback host is rejected on startup unless `ARCUI_BRIDGE_ALLOW_INSECURE=true` is set explicitly. | Optional `ARCUI_BRIDGE_TOKEN` bearer (recommended) |
 | Connector ↔ Gemini File Search | External, only when explicitly enabled | `GEMINI_API_KEY` + `ARCUI_ENABLE_KNOWLEDGE_TOOLS=true` |
 
 ### Input validation
@@ -49,6 +49,14 @@ documented schema reaches the Unity bridge.
 - Set `ARCUI_BRIDGE_TOKEN` in production and keep it out of source control.
 - Keep the Unity bridge bound to loopback (`localhostOnly = true` on
   `ArcHMIMcpBridge`). Do not expose port `17842` to untrusted or public networks.
+- If you must reach the Unity bridge from another machine, use TLS — terminate
+  HTTPS at a reverse proxy on the Unity host and point `ARCUI_BRIDGE_URL` at
+  the proxy's `https://` endpoint. The connector **refuses to start** if
+  `ARCUI_BRIDGE_URL` resolves to a non-loopback host over plain `http://`,
+  because the bearer token and DataStore traffic would otherwise travel in
+  cleartext. The escape hatch `ARCUI_BRIDGE_ALLOW_INSECURE=true` exists only
+  for trusted private links such as a VPN tunnel where TLS is terminated at
+  the network layer — it emits a warning on every startup.
 - Treat `GEMINI_API_KEY` like any other API credential — rotate on suspicion,
   scope to the minimum project, and review File Search store contents before
   enabling for regulated deployments.
