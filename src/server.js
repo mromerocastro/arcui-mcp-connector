@@ -482,6 +482,42 @@ const KNOWLEDGE_TOOLS = [
     },
 ];
 
+const TIMEMACHINE_TOOLS = [
+    {
+        name: "timemachine_play",
+        description: "Resume playback of historical telemetry in the TimeMachine.",
+        inputSchema: { type: "object", properties: {} },
+    },
+    {
+        name: "timemachine_pause",
+        description: "Pause playback of historical telemetry in the TimeMachine.",
+        inputSchema: { type: "object", properties: {} },
+    },
+    {
+        name: "timemachine_seek",
+        description: "Jump to a specific time (in seconds) in the TimeMachine simulation.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                target_time: { type: "number", description: "Time in seconds to seek to." },
+            },
+            required: ["target_time"],
+        },
+    },
+    {
+        name: "timemachine_forecast",
+        description: "Predict the future value of a tag using the pre-loaded TimeMachine scenario data.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                tag: { type: "string", description: "DataStore tag key." },
+                lookahead_seconds: { type: "number", description: "How many seconds into the future to look." },
+            },
+            required: ["tag", "lookahead_seconds"],
+        },
+    },
+];
+
 // Knowledge tools are gated by ARCUI_ENABLE_KNOWLEDGE_TOOLS so MCP clients
 // never see Gemini-backed tools they cannot actually use. knowledge_status
 // is always exposed so consumers can discover how to enable the rest.
@@ -489,7 +525,7 @@ const ACTIVE_KNOWLEDGE_TOOLS = geminiFileSearch.isEnabled()
     ? KNOWLEDGE_TOOLS
     : KNOWLEDGE_TOOLS.filter((t) => t.name === "knowledge_status");
 
-const ALL_TOOLS = [...OPERATIONS_TOOLS, ...BUILDER_TOOLS, ...TRAINING_TOOLS, ...ACTIVE_KNOWLEDGE_TOOLS];
+const ALL_TOOLS = [...OPERATIONS_TOOLS, ...BUILDER_TOOLS, ...TRAINING_TOOLS, ...TIMEMACHINE_TOOLS, ...ACTIVE_KNOWLEDGE_TOOLS];
 
 // ─── Tool Handlers ─────────────────────────────────────────────────────────
 
@@ -701,6 +737,19 @@ const HANDLERS = {
             ...args,
             session,
         }));
+    },
+
+    // ── TimeMachine (playback control) ───────────────────────────────────────
+    timemachine_play: async () => asText(await bridge.timeMachinePlay()),
+    timemachine_pause: async () => asText(await bridge.timeMachinePause()),
+    timemachine_seek: async ({ target_time }) => {
+        if (target_time === undefined) return asError("Parameter 'target_time' is required.");
+        return asText(await bridge.timeMachineSeek(target_time));
+    },
+    timemachine_forecast: async ({ tag, lookahead_seconds }) => {
+        if (!tag) return asError("Parameter 'tag' is required.");
+        if (lookahead_seconds === undefined) return asError("Parameter 'lookahead_seconds' is required.");
+        return asText(await bridge.timeMachineForecast(tag, lookahead_seconds));
     },
 };
 

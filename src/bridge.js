@@ -84,4 +84,10 @@ export const bridge = {
     injectEvent:      (payload)        => request("POST", "/mcp/session/inject",   { body: payload }),
     sendInstructorMessage: (payload)   => request("POST", "/mcp/session/instructor-message", { body: payload }),
     evaluateSession:  ()               => request("GET",  "/mcp/session/evaluate"),
+
+    // ── TimeMachine (playback control) ───────────────────────────────────────
+    timeMachinePlay:     ()               => request("POST", "/mcp/timemachine/play"),
+    timeMachinePause:    ()               => request("POST", "/mcp/timemachine/pause"),
+    timeMachineSeek:     (target_time)    => request("POST", "/mcp/timemachine/seek", { body: { target_time: target_time.toString() } }),
+    timeMachineForecast: (tag, lookahead) => request("POST", "/mcp/timemachine/forecast", { body: { tag, lookahead_seconds: lookahead.toString() } }),
 };
