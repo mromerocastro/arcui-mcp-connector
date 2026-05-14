@@ -44,17 +44,33 @@ bad value back to the client**, so an attacker payload cannot reflect off the
 error path. Unknown fields on state-changing tools are dropped: only the
 documented schema reaches the Unity bridge.
 
-### Testing
+### Testing & type checking
 
-The connector ships a `node:test` suite with **zero new dependencies** — it
-uses only Node's built-in test runner and assertion library. Run from the
+The connector ships a `node:test` suite with **zero runtime dependencies** —
+it uses only Node's built-in test runner and assertion library. Run from the
 repo root:
 
 ```bash
-npm test
+npm test       # 54-test suite
+npm run typecheck   # strict tsc --noEmit over JSDoc-annotated .js
 ```
 
-Coverage targets every hardening layer from this audit:
+`typecheck` runs TypeScript in JSDoc mode (`allowJs` + `checkJs`) against
+`src/` and `test/`. There is **no transpilation and no emit** — TypeScript
+is a `devDependencies` entry used purely for static analysis. The runtime
+remains plain ESM JavaScript, just like before.
+
+Coverage and conventions:
+
+- All exported public APIs in `validation.js`, `idempotency.js`,
+  `tools-filter.js`, `bridge.js`, `server.js`, and `check-bridge.js` carry
+  JSDoc type annotations and pass strict TypeScript checks (no implicit
+  any, strict null checks, no fallthrough cases).
+- `gemini-file-search.js` is currently marked `@ts-nocheck` because it
+  wraps the loosely-typed `@google/genai` SDK. Typing its public exports
+  is a documented follow-up.
+
+The Node test suite covers every hardening layer from the audit:
 
 - `validation.js` — every helper, boundary, and the `Patterns.TAG` allow /
   reject set (injection-style payloads are explicitly rejected).

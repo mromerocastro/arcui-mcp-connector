@@ -589,14 +589,25 @@ const FULL_TOOL_CATALOG = [
 // capability-filtered subset before the MCP client sees the tool list. The
 // ListToolsRequestSchema handler captures this binding, not a snapshot, so
 // reassignment is picked up by every subsequent listTools call.
+/** @type {Array<{name: string, [key: string]: any}>} */
 let ALL_TOOLS = FULL_TOOL_CATALOG;
 
 // ─── Tool Handlers ─────────────────────────────────────────────────────────
 
+/**
+ * MCP-shaped success response.
+ * @param {any} obj
+ * @returns {{ content: Array<{ type: string, text: string }> }}
+ */
 function asText(obj) {
     return { content: [{ type: "text", text: typeof obj === "string" ? obj : JSON.stringify(obj, null, 2) }] };
 }
 
+/**
+ * MCP-shaped error response.
+ * @param {string} msg
+ * @returns {{ content: Array<{ type: string, text: string }>, isError: true }}
+ */
 function asError(msg) {
     return { content: [{ type: "text", text: msg }], isError: true };
 }
@@ -610,6 +621,11 @@ async function getLiveTagsForKnowledge() {
     }
 }
 
+/**
+ * @param {string|object|undefined|null} raw
+ * @param {any} [fallback]
+ * @returns {any}
+ */
 function parseOptionalJson(raw, fallback = {}) {
     if (!raw) return fallback;
     if (typeof raw === "object") return raw;
@@ -617,6 +633,11 @@ function parseOptionalJson(raw, fallback = {}) {
     catch (e) { throw new Error(`session_json is not valid JSON: ${e.message}`); }
 }
 
+/**
+ * @typedef {(args?: Record<string, any>) => Promise<any>} ToolHandler
+ */
+
+/** @type {Record<string, ToolHandler>} */
 const HANDLERS = {
     // ── Operations ─────────────────────────────────────────────────────────
     get_sensor_value: async (args) => {
@@ -647,6 +668,7 @@ const HANDLERS = {
     get_protocol_config: async (args) => {
         const industry  = requireString(args, "industry",  { maxLen: 64 });
         const equipment = requireString(args, "equipment", { maxLen: 64 });
+        /** @type {Record<string, Record<string, any>>} */
         const catalog = {
             "energy/wind-turbine":   { protocol: "MQTT",   broker: "mqtt://broker.local:1883", tags: ["rotor_rpm", "pitch_angle", "wind_speed", "grid_power"] },
             "energy/solar-farm":     { protocol: "MQTT",   broker: "mqtt://broker.local:1883", tags: ["dc_voltage", "inverter_temp", "ac_power", "irradiance"] },
@@ -674,7 +696,7 @@ const HANDLERS = {
         if (!parsed?.system_name)   errors.push("Missing required field: 'system_name'.");
         if (!Array.isArray(parsed?.tags)) errors.push("Missing or invalid 'tags' array.");
         else {
-            parsed.tags.forEach((t, i) => {
+            parsed.tags.forEach(/** @param {any} t @param {number} i */ (t, i) => {
                 if (!t?.name)  errors.push(`tags[${i}]: missing 'name'.`);
                 if (!t?.unit && t?.type !== "state") errors.push(`tags[${i}]: missing 'unit' for numeric tag.`);
             });
@@ -707,6 +729,7 @@ const HANDLERS = {
 
     list_available_tags: async (args) => {
         const vertical = requireString(args, "vertical", { maxLen: 64 });
+        /** @type {Record<string, string[]>} */
         const catalogs = {
             energy:     ["rotor_rpm", "pitch_angle", "wind_speed", "grid_power", "dc_voltage", "ac_power", "irradiance"],
             medical:    ["heart_rate", "spo2", "flow_rate", "volume_delivered", "occlusion", "battery_level"],
@@ -812,6 +835,7 @@ const HANDLERS = {
         optionalBoolean(args, "register");
 
         const tags = await getLiveTagsForKnowledge();
+        /** @type {Record<string, any>} */
         const result = await geminiFileSearch.generateScenario({
             ...args,
             tags,

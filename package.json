@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node src/server.js",
     "check-bridge": "node src/check-bridge.js",
-    "test": "node --test"
+    "test": "node --test",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=18"
@@ -20,5 +21,8 @@
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "license": "UNLICENSED",
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
 }

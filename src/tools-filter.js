@@ -11,6 +11,7 @@
  * available) or as client-side stubs that never call the bridge.
  */
 
+/** @type {Readonly<Record<string, string>>} */
 export const TOOL_CAPABILITY = Object.freeze({
     // Operations
     "get_active_alarms":       "alarms",
@@ -37,8 +38,12 @@ export const TOOL_CAPABILITY = Object.freeze({
  * Returns the subset of `tools` whose required capability is enabled in
  * `capabilities`. Tools without a mapped capability pass through unchanged.
  *
+ * `capabilities` may be null or undefined — both behave like an empty
+ * record (every capability-gated tool is filtered out).
+ *
  * @param {Array<{name: string}>} tools
- * @param {Record<string, boolean>} capabilities
+ * @param {Record<string, any> | null | undefined} capabilities
+ * @returns {Array<{name: string}>}
  */
 export function filterToolsByCapabilities(tools, capabilities) {
     const caps = capabilities || {};

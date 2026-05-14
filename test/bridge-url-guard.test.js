@@ -23,15 +23,15 @@ test("IPv6 ::1 http is accepted as loopback", () => {
 test("external http is refused without the override", () => {
     const r = evaluateBridgeUrl("http://example.com:8080");
     assert.equal(r.ok, false);
-    assert.match(r.error, /Plain HTTP to a non-loopback host/);
-    assert.match(r.error, /cleartext/);
+    assert.match(r.error ?? "", /Plain HTTP to a non-loopback host/);
+    assert.match(r.error ?? "", /cleartext/);
 });
 
 test("external http with ALLOW_INSECURE proceeds with a warning", () => {
     const r = evaluateBridgeUrl("http://example.com:8080", { allowInsecure: true });
     assert.equal(r.ok, true);
-    assert.match(r.warning, /ALLOW_INSECURE=true/);
-    assert.match(r.warning, /cleartext/);
+    assert.match(r.warning ?? "", /ALLOW_INSECURE=true/);
+    assert.match(r.warning ?? "", /cleartext/);
 });
 
 test("https to any host is accepted without warning", () => {
@@ -44,14 +44,14 @@ test("non-http(s) scheme is refused even if loopback", () => {
     for (const url of ["ftp://localhost", "file:///tmp/x", "javascript:alert(1)", "ws://localhost"]) {
         const r = evaluateBridgeUrl(url);
         assert.equal(r.ok, false, `should refuse '${url}'`);
-        assert.match(r.error, /must use http:\/\/ or https:\/\//);
+        assert.match(r.error ?? "", /must use http:\/\/ or https:\/\//);
     }
 });
 
 test("malformed URL is refused", () => {
     const r = evaluateBridgeUrl("not a url");
     assert.equal(r.ok, false);
-    assert.match(r.error, /not a valid URL/);
+    assert.match(r.error ?? "", /not a valid URL/);
 });
 
 test("trailing slashes are stripped", () => {

@@ -14,9 +14,26 @@
  *
  * Any ValidationError thrown here is converted to a friendly asError() by the
  * top-level CallToolRequestSchema handler in server.js.
+ *
+ * @typedef {Object} StringOpts
+ * @property {number} [maxLen]      Maximum string length (default 256).
+ * @property {RegExp} [pattern]     Optional regex the value must satisfy.
+ * @property {boolean} [allowEmpty] Allow zero-length strings (default false).
+ *
+ * @typedef {Object} NumberOpts
+ * @property {number}  [min]      Inclusive minimum.
+ * @property {number}  [max]      Inclusive maximum.
+ * @property {boolean} [integer]  Require an integer (default false).
+ *
+ * @typedef {Record<string, any> | undefined} Args
+ *      Generic argument bag — the raw `arguments` object MCP hands to a
+ *      tool handler (or undefined when the client sent no arguments).
+ *      Validators access fields by name without assuming a specific
+ *      schema and tolerate the undefined case via `args?.[name]`.
  */
 
 export class ValidationError extends Error {
+    /** @param {string} message */
     constructor(message) {
         super(message);
         this.name = "ValidationError";
@@ -47,10 +64,17 @@ export const Patterns = Object.freeze({
 // needs longer payloads (e.g. session_json).
 const DEFAULT_STRING_MAX = 256;
 
+/** @param {unknown} v */
 function isMissing(v) {
     return v === undefined || v === null;
 }
 
+/**
+ * @param {Args} args
+ * @param {string} name
+ * @param {StringOpts} [opts]
+ * @returns {string}
+ */
 export function requireString(args, name, opts = {}) {
     const { maxLen = DEFAULT_STRING_MAX, pattern, allowEmpty = false } = opts;
     const v = args?.[name];
@@ -62,11 +86,23 @@ export function requireString(args, name, opts = {}) {
     return v;
 }
 
+/**
+ * @param {Args} args
+ * @param {string} name
+ * @param {StringOpts} [opts]
+ * @returns {string|undefined}
+ */
 export function optionalString(args, name, opts = {}) {
     if (isMissing(args?.[name])) return undefined;
     return requireString(args, name, opts);
 }
 
+/**
+ * @param {Args} args
+ * @param {string} name
+ * @param {NumberOpts} [opts]
+ * @returns {number}
+ */
 export function requireNumber(args, name, opts = {}) {
     const { min, max, integer = false } = opts;
     const raw = args?.[name];
@@ -79,11 +115,23 @@ export function requireNumber(args, name, opts = {}) {
     return n;
 }
 
+/**
+ * @param {Args} args
+ * @param {string} name
+ * @param {NumberOpts} [opts]
+ * @returns {number|undefined}
+ */
 export function optionalNumber(args, name, opts = {}) {
     if (isMissing(args?.[name])) return undefined;
     return requireNumber(args, name, opts);
 }
 
+/**
+ * @param {Args} args
+ * @param {string} name
+ * @param {readonly string[]} allowed
+ * @returns {string}
+ */
 export function requireEnum(args, name, allowed) {
     const v = requireString(args, name, { maxLen: 64 });
     if (!allowed.includes(v)) {
@@ -92,11 +140,24 @@ export function requireEnum(args, name, allowed) {
     return v;
 }
 
+/**
+ * @param {Args} args
+ * @param {string} name
+ * @param {readonly string[]} allowed
+ * @param {string} [fallback]
+ * @returns {string|undefined}
+ */
 export function optionalEnum(args, name, allowed, fallback) {
     if (isMissing(args?.[name])) return fallback;
     return requireEnum(args, name, allowed);
 }
 
+/**
+ * @param {Args} args
+ * @param {string} name
+ * @param {boolean} [fallback]
+ * @returns {boolean|undefined}
+ */
 export function optionalBoolean(args, name, fallback) {
     const raw = args?.[name];
     if (isMissing(raw)) return fallback;

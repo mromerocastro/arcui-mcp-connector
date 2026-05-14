@@ -87,7 +87,8 @@ test("thrown exceptions are NOT cached and propagate", async () => {
 
 test("concurrent calls with same key collapse onto one handler invocation", async () => {
     let calls = 0;
-    let resolve;
+    /** @type {(value: any) => void} */
+    let resolve = () => { throw new Error("resolve called before fn() invocation"); };
     const fn = () => {
         calls += 1;
         return new Promise(r => { resolve = r; });

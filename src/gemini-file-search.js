@@ -1,3 +1,11 @@
+// @ts-nocheck
+//
+// Skipped from `tsc --noEmit` for now. This module wraps the @google/genai
+// SDK whose public surface returns loosely-shaped response objects, and
+// rich JSDoc would amount to redeclaring the SDK. TODO: type the EXPORTED
+// public API (createStore / listStores / search / indexFile / etc.) with
+// JSDoc once the broader test suite around this module exists. Internal
+// helpers can remain as-is. Removing this directive is the gate.
 import { GoogleGenAI } from "@google/genai";
 import { existsSync, statSync } from "node:fs";
 import { basename, delimiter, relative, resolve } from "node:path";

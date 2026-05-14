@@ -4,6 +4,10 @@ import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
+/** @typedef {import("node:http").IncomingMessage} IncomingMessage */
+/** @typedef {import("node:http").ServerResponse} ServerResponse */
+/** @typedef {(req: IncomingMessage, res: ServerResponse) => void} MockHandler */
+
 const BRIDGE_PATH = resolve(import.meta.dirname, "../src/bridge.js");
 
 // bridge.js reads env vars at module evaluation, so each scenario must load
@@ -13,10 +17,13 @@ async function importBridgeFresh() {
     return import(bustedUrl);
 }
 
+/** @param {MockHandler} handler */
 async function startMock(handler) {
     const server = createServer(handler);
-    await new Promise(r => server.listen(0, "127.0.0.1", r));
-    return { server, port: server.address().port };
+    await /** @type {Promise<void>} */ (new Promise(r => server.listen(0, "127.0.0.1", () => r())));
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("server.address() did not return an AddressInfo");
+    return { server, port: addr.port };
 }
 
 // Silence the stderr warnings these scenarios intentionally emit so the

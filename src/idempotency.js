@@ -33,8 +33,19 @@
 const TTL_MS      = 5 * 60 * 1000;
 const MAX_ENTRIES = 256;
 
+/**
+ * @typedef {Object} CacheEntry
+ * @property {Promise<any>} promise   Pending or settled handler invocation.
+ * @property {number}       expires   Absolute epoch-ms when the entry expires.
+ */
+
+/** @type {Map<string, CacheEntry>} */
 const cache = new Map();
 
+/**
+ * @param {string}     key
+ * @param {CacheEntry} entry
+ */
 function bumpToEnd(key, entry) {
     // Map preserves insertion order; deleting and re-setting moves the key
     // to the end so we can read the oldest entry via cache.keys().next().
@@ -51,10 +62,12 @@ function evictIfFull() {
 /**
  * Wrap a handler call with idempotency semantics.
  *
- * @param {string} toolName  Tool identifier — namespaces keys so that the
- *                           same idempotency_key cannot collide across tools.
- * @param {string|undefined} key  Client-supplied dedup key, or falsy to skip.
+ * @param {string} toolName Tool identifier — namespaces keys so that the
+ *                          same idempotency_key cannot collide across tools.
+ * @param {string|null|undefined} key Client-supplied dedup key. Falsy values
+ *                          (null, undefined, "") bypass the cache entirely.
  * @param {() => Promise<any>} fn The handler invocation.
+ * @returns {Promise<any>}
  */
 export async function withIdempotency(toolName, key, fn) {
     if (!key) return fn();
@@ -71,8 +84,7 @@ export async function withIdempotency(toolName, key, fn) {
         cache.delete(cacheKey);
     }
 
-    const entry = { promise: null, expires: now + TTL_MS };
-    entry.promise = (async () => {
+    const promise = (async () => {
         try {
             const result = await fn();
             if (result && result.isError) {
@@ -86,9 +98,11 @@ export async function withIdempotency(toolName, key, fn) {
         }
     })();
 
+    /** @type {CacheEntry} */
+    const entry = { promise, expires: now + TTL_MS };
     cache.set(cacheKey, entry);
     evictIfFull();
-    return entry.promise;
+    return promise;
 }
 
 // Test-only helpers. Not part of the public API; renamed with leading

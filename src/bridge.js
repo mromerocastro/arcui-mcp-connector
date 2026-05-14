@@ -43,6 +43,18 @@ const LEGACY_FALLBACK = Object.freeze({
 });
 
 /**
+ * @typedef {Object} BridgeUrlResult
+ * @property {boolean}  ok        true if the URL is acceptable, false otherwise.
+ * @property {string}  [url]      Sanitized URL when ok=true (trailing slashes stripped).
+ * @property {string}  [warning]  Non-fatal advisory shown on stderr when ok=true.
+ * @property {string}  [error]    Fatal explanation shown on stderr when ok=false.
+ *
+ * @typedef {Object} RequestOpts
+ * @property {Record<string, string|number|boolean|null|undefined>} [query]
+ * @property {any} [body]
+ */
+
+/**
  * Pure URL guard. Decides whether `rawUrl` is acceptable as the bridge target
  * given the operator's `allowInsecure` opt-in. Returns either:
  *   { ok: true,  url, warning? }   — proceed (warning is non-fatal advisory)
@@ -50,6 +62,10 @@ const LEGACY_FALLBACK = Object.freeze({
  *
  * Kept side-effect free so the suite in test/bridge-url-guard.test.js can
  * exercise every branch without spawning child processes.
+ *
+ * @param {string|undefined|null} rawUrl
+ * @param {{ allowInsecure?: boolean }} [opts]
+ * @returns {BridgeUrlResult}
  */
 export function evaluateBridgeUrl(rawUrl, { allowInsecure = false } = {}) {
     const raw = String(rawUrl || "").replace(/\/+$/, "");
@@ -116,12 +132,23 @@ const BASE_URL = resolveSecureBaseUrl();
 const TOKEN = process.env.ARCUI_BRIDGE_TOKEN || "";
 const TIMEOUT_MS = parseInt(process.env.ARCUI_BRIDGE_TIMEOUT_MS || "5000", 10);
 
+/**
+ * @param {Record<string, string>} [extra]
+ * @returns {Record<string, string>}
+ */
 function buildHeaders(extra = {}) {
+    /** @type {Record<string, string>} */
     const h = { "Accept": "application/json", ...extra };
     if (TOKEN) h["Authorization"] = `Bearer ${TOKEN}`;
     return h;
 }
 
+/**
+ * @param {string} method
+ * @param {string} path
+ * @param {RequestOpts} [opts]
+ * @returns {Promise<any>}
+ */
 async function request(method, path, { query, body } = {}) {
     const url = new URL(BASE_URL + path);
     if (query) {
@@ -230,28 +257,28 @@ export const bridge = {
     hasAuth: Boolean(TOKEN),
 
     handshake,
-    schema:         ()                 => request("GET",  "/mcp/schema"),
-    ping:           ()                 => request("GET",  "/mcp/ping"),
-    stats:          ()                 => request("GET",  "/mcp/stats"),
-    listTags:       ()                 => request("GET",  "/mcp/tags"),
-    getTag:         (key)              => request("GET",  "/mcp/tag", { query: { key } }),
-    activeAlarms:   ()                 => request("GET",  "/mcp/alarms/active"),
-    alarmHistory:   (limit)            => request("GET",  "/mcp/alarms/history", { query: { limit } }),
-    triggerAlarm:   (payload)          => request("POST", "/mcp/alarms/trigger", { body: payload }),
-    health:         ()                 => request("GET",  "/mcp/health"),
-    report:         (payload)          => request("POST", "/mcp/report", { body: payload }),
+    schema:         /** @returns {Promise<any>} */ ()                          => request("GET",  "/mcp/schema"),
+    ping:           /** @returns {Promise<any>} */ ()                          => request("GET",  "/mcp/ping"),
+    stats:          /** @returns {Promise<any>} */ ()                          => request("GET",  "/mcp/stats"),
+    listTags:       /** @returns {Promise<any>} */ ()                          => request("GET",  "/mcp/tags"),
+    getTag:         /** @param {string} key */     (key)                       => request("GET",  "/mcp/tag", { query: { key } }),
+    activeAlarms:   /** @returns {Promise<any>} */ ()                          => request("GET",  "/mcp/alarms/active"),
+    alarmHistory:   /** @param {number} limit */   (limit)                     => request("GET",  "/mcp/alarms/history", { query: { limit } }),
+    triggerAlarm:   /** @param {any} payload */    (payload)                   => request("POST", "/mcp/alarms/trigger", { body: payload }),
+    health:         /** @returns {Promise<any>} */ ()                          => request("GET",  "/mcp/health"),
+    report:         /** @param {any} payload */    (payload)                   => request("POST", "/mcp/report", { body: payload }),
 
     // ── Training (scenario authoring + live session) ─────────────────────────
-    createScenario:   (payload)        => request("POST", "/mcp/scenario/create",  { body: payload }),
-    startScenario:    (payload)        => request("POST", "/mcp/scenario/start",   { body: payload }),
-    listScenarios:    ()               => request("GET",  "/mcp/scenario/list"),
-    injectEvent:      (payload)        => request("POST", "/mcp/session/inject",   { body: payload }),
-    sendInstructorMessage: (payload)   => request("POST", "/mcp/session/instructor-message", { body: payload }),
-    evaluateSession:  ()               => request("GET",  "/mcp/session/evaluate"),
+    createScenario:   /** @param {any} payload */ (payload)                    => request("POST", "/mcp/scenario/create",  { body: payload }),
+    startScenario:    /** @param {any} payload */ (payload)                    => request("POST", "/mcp/scenario/start",   { body: payload }),
+    listScenarios:    /** @returns {Promise<any>} */ ()                        => request("GET",  "/mcp/scenario/list"),
+    injectEvent:      /** @param {any} payload */ (payload)                    => request("POST", "/mcp/session/inject",   { body: payload }),
+    sendInstructorMessage: /** @param {any} payload */ (payload)               => request("POST", "/mcp/session/instructor-message", { body: payload }),
+    evaluateSession:  /** @returns {Promise<any>} */ ()                        => request("GET",  "/mcp/session/evaluate"),
 
     // ── TimeMachine (playback control) ───────────────────────────────────────
-    timeMachinePlay:     ()               => request("POST", "/mcp/timemachine/play"),
-    timeMachinePause:    ()               => request("POST", "/mcp/timemachine/pause"),
-    timeMachineSeek:     (target_time)    => request("POST", "/mcp/timemachine/seek", { body: { target_time: target_time.toString() } }),
-    timeMachineForecast: (tag, lookahead) => request("POST", "/mcp/timemachine/forecast", { body: { tag, lookahead_seconds: lookahead.toString() } }),
+    timeMachinePlay:     /** @returns {Promise<any>} */ ()                     => request("POST", "/mcp/timemachine/play"),
+    timeMachinePause:    /** @returns {Promise<any>} */ ()                     => request("POST", "/mcp/timemachine/pause"),
+    timeMachineSeek:     /** @param {number} target_time */ (target_time)      => request("POST", "/mcp/timemachine/seek", { body: { target_time: target_time.toString() } }),
+    timeMachineForecast: /** @param {string} tag @param {number} lookahead */ (tag, lookahead) => request("POST", "/mcp/timemachine/forecast", { body: { tag, lookahead_seconds: lookahead.toString() } }),
 };

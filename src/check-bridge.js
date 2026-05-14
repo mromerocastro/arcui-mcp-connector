@@ -12,8 +12,11 @@
 
 import { bridge } from "./bridge.js";
 
+/** @param {string} s */
 const ok   = (s) => console.log(`\x1b[32m✓\x1b[0m ${s}`);
+/** @param {string} s */
 const fail = (s) => console.log(`\x1b[31m✗\x1b[0m ${s}`);
+/** @param {string} s */
 const info = (s) => console.log(`  ${s}`);
 
 let exitCode = 0;
