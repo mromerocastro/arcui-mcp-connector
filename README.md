@@ -17,6 +17,23 @@ This connector is an **optional add-on** for advanced users. The core ArcUI Syst
    git clone https://github.com/mromerocastro/arcui-mcp-connector.git
    ```
 
+## Available Tools
+
+The MCP server exposes several tool categories for AI agents to control the ArcUI environment:
+
+### Operations & Training
+- **Core Operations**: Read tags, list active alarms, query system health, and list available sensors.
+- **Scenario Runner**: Create, start, and evaluate training scenarios (`create_scenario`, `start_scenario`, `evaluate_session`).
+- **Event Injection**: Trigger alarms and inject specific tag overrides during a live session.
+
+### TimeMachine (Time-Travel Simulation)
+The TimeMachine tools allow AI agents to navigate historical telemetry and predict future states when the `ArcHMITimeMachineProvider` is active in Unity.
+- `timemachine_play` / `timemachine_pause`: Control playback of the simulation timeline.
+- `timemachine_seek`: Jump to a specific timestamp in the scenario (in seconds).
+- `timemachine_forecast`: Predict the future value of a specific tag by looking ahead in the pre-loaded telemetry.
+
+> **Security Note:** All tool interactions, including TimeMachine and Training injections, are protected by the `ARCUI_BRIDGE_TOKEN` authentication mechanism. Ensure your token is securely stored in your MCP client configuration and never expose the Unity bridge port (`17842` by default) to untrusted or public networks.
+
 ## Gemini File Search MVP
 
 This connector can expose ArcUI Knowledge Pack tools backed by Gemini File Search.
