@@ -649,6 +649,17 @@ const TIMEMACHINE_TOOLS = [
             required: ["tag", "lookahead_seconds"],
         },
     },
+    {
+        name: "timemachine_load_session",
+        description: "Dynamically load a session bundle (.ndjson) into the TimeMachine for playback.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                path: { type: "string", description: "Absolute path to the tag_writes.ndjson file." },
+            },
+            required: ["path"],
+        },
+    },
 ];
 
 // Knowledge tools are gated by ARCUI_ENABLE_KNOWLEDGE_TOOLS so MCP clients
@@ -979,6 +990,10 @@ const HANDLERS = {
         const tag               = requireString(args, "tag", { pattern: Patterns.TAG });
         const lookahead_seconds = requireNumber(args, "lookahead_seconds", { min: 0 });
         return asText(await bridge.timeMachineForecast(tag, lookahead_seconds));
+    },
+    timemachine_load_session: async (args) => {
+        const path = requireString(args, "path");
+        return asText(await bridge.timeMachineLoad(path));
     },
 };
 

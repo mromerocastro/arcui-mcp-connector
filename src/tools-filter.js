@@ -35,6 +35,7 @@ export const TOOL_CAPABILITY = Object.freeze({
     "timemachine_pause":       "timemachine",
     "timemachine_seek":        "timemachine",
     "timemachine_forecast":    "timemachine",
+    "timemachine_load_session": "timemachine",
 });
 
 /**

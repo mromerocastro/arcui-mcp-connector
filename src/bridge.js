@@ -284,4 +284,5 @@ export const bridge = {
     timeMachinePause:    /** @returns {Promise<any>} */ ()                     => request("POST", "/mcp/timemachine/pause"),
     timeMachineSeek:     /** @param {number} target_time */ (target_time)      => request("POST", "/mcp/timemachine/seek", { body: { target_time: target_time.toString() } }),
     timeMachineForecast: /** @param {string} tag @param {number} lookahead */ (tag, lookahead) => request("POST", "/mcp/timemachine/forecast", { body: { tag, lookahead_seconds: lookahead.toString() } }),
+    timeMachineLoad:     /** @param {string} path */ (path)                    => request("POST", "/mcp/timemachine/load", { body: { path } }),
 };
