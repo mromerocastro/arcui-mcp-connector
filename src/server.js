@@ -46,6 +46,12 @@ const IDEMPOTENT_TOOLS = new Set([
     "create_scenario",
     "start_scenario",
     "inject_event",
+    // Session lifecycle is idempotent at the SDK wire level — but caching the
+    // response within the 5-min TTL gives Claude Desktop the same answer
+    // across retries instead of recomputing every time the operator presses
+    // the button twice. Annotation is NOT idempotent: it accumulates by design.
+    "start_session",
+    "end_session",
 ]);
 
 // ─── Tool Catalog ──────────────────────────────────────────────────────────
@@ -350,6 +356,81 @@ const TRAINING_TOOLS = [
                 },
             },
             required: ["text"],
+        },
+    },
+    {
+        name: "start_session",
+        description:
+            "Begin a new ArcUI TrainingSession on the running Unity scene. Idempotent: if a session " +
+            "is already active, returns its existing id with was_already_active=true instead of " +
+            "starting a second one. When the optional 'procedure' label is supplied and a " +
+            "SessionJournal is present in the scene, the label is forwarded to the bundle manifest " +
+            "so the on-disk debrief artifact carries human-readable context. Use this before any " +
+            "annotate_session or inject_event call when the trainee's run did not auto-start.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                procedure: {
+                    type: "string",
+                    description:
+                        "Free-form label identifying the procedure being captured (e.g. 'lumbar_puncture_pediatric', " +
+                        "'reactor_startup'). Optional; written verbatim into the bundle manifest when present.",
+                },
+                idempotency_key: {
+                    type: "string",
+                    maxLength: 256,
+                    description: "Optional client-supplied dedup key. Cached responses are returned for 5 minutes.",
+                },
+            },
+        },
+    },
+    {
+        name: "end_session",
+        description:
+            "Stop the active ArcUI TrainingSession. Idempotent: if no session is active, returns " +
+            "ok=true with was_active=false. Reports the captured event count and, when a SessionJournal " +
+            "is wired, the on-disk bundle directory containing events.ndjson, tag_writes.ndjson, " +
+            "contract_snapshot.json and manifest.json — pass that path to downstream debrief tooling " +
+            "or read the bundle directly with evaluate_session (in-memory view) before the scene closes.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                idempotency_key: {
+                    type: "string",
+                    maxLength: 256,
+                    description: "Optional client-supplied dedup key. Cached responses are returned for 5 minutes.",
+                },
+            },
+        },
+    },
+    {
+        name: "annotate_session",
+        description:
+            "Mark a meaningful moment on the active TrainingSession with a short label and optional " +
+            "free-form note. Annotations are markers for debriefing ('critical event here', 'team " +
+            "paused', 'operator hesitation'), not coaching delivered to the trainee — for instructor " +
+            "coaching use send_instructor_message instead. Requires an active session; if none, " +
+            "returns an explicit error so Claude can call start_session first. Annotations accumulate, " +
+            "so repeated calls record additional markers rather than replacing prior ones.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                label: {
+                    type: "string",
+                    description: "Short stable label grouping the annotation (e.g. 'critical', 'notable', 'question').",
+                },
+                note: {
+                    type: "string",
+                    description: "Optional free-form note expanded in the debrief view.",
+                },
+                author: {
+                    type: "string",
+                    description:
+                        "Identity of the human (or agent) creating the annotation. Recorded as the writer id " +
+                        "in the audit trail. Defaults to 'mcp_remote' when omitted.",
+                },
+            },
+            required: ["label"],
         },
     },
 ];
@@ -775,6 +856,22 @@ const HANDLERS = {
         const text            = requireString(args, "text", { maxLen: 4000 });
         const instructor_name = optionalString(args, "instructor_name", { maxLen: 128 }) ?? "";
         return asText(await bridge.sendInstructorMessage({ text, instructor_name }));
+    },
+
+    start_session: async (args = {}) => {
+        // 'procedure' is metadata only — no pattern restriction beyond a length cap.
+        const procedure = optionalString(args, "procedure", { maxLen: 256 }) ?? "";
+        return asText(await bridge.startSession({ procedure }));
+    },
+
+    end_session: async () => asText(await bridge.endSession()),
+
+    annotate_session: async (args = {}) => {
+        // 'label' is required and is what the audit trail groups annotations by.
+        const label  = requireString(args, "label",  { maxLen: 128 });
+        const note   = optionalString(args, "note",   { maxLen: 4000 }) ?? "";
+        const author = optionalString(args, "author", { maxLen: 128 }) ?? "";
+        return asText(await bridge.annotateSession({ label, note, author }));
     },
 
     // --- Knowledge / RAG (Gemini File Search) -----------------------------

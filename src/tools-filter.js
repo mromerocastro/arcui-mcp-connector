@@ -25,6 +25,9 @@ export const TOOL_CAPABILITY = Object.freeze({
     "list_scenarios":          "training",
     "inject_event":            "training",
     "evaluate_session":        "training",
+    "start_session":           "training",
+    "end_session":             "training",
+    "annotate_session":        "training",
     "send_instructor_message": "instructor_messages",
 
     // TimeMachine

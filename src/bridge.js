@@ -275,6 +275,9 @@ export const bridge = {
     injectEvent:      /** @param {any} payload */ (payload)                    => request("POST", "/mcp/session/inject",   { body: payload }),
     sendInstructorMessage: /** @param {any} payload */ (payload)               => request("POST", "/mcp/session/instructor-message", { body: payload }),
     evaluateSession:  /** @returns {Promise<any>} */ ()                        => request("GET",  "/mcp/session/evaluate"),
+    startSession:     /** @param {any} payload */ (payload)                    => request("POST", "/mcp/session/start",    { body: payload }),
+    endSession:       /** @returns {Promise<any>} */ ()                        => request("POST", "/mcp/session/end",      { body: {} }),
+    annotateSession:  /** @param {any} payload */ (payload)                    => request("POST", "/mcp/session/annotate", { body: payload }),
 
     // ── TimeMachine (playback control) ───────────────────────────────────────
     timeMachinePlay:     /** @returns {Promise<any>} */ ()                     => request("POST", "/mcp/timemachine/play"),
