@@ -120,8 +120,14 @@ The MCP server exposes several tool categories for AI agents to control the ArcU
 
 ### Operations & Training
 - **Core Operations**: Read tags, list active alarms, query system health, and list available sensors.
-- **Scenario Runner**: Create, start, and evaluate training scenarios (`create_scenario`, `start_scenario`, `evaluate_session`).
+- **Scenario Runner**: Create, start, and list training scenarios (`create_scenario`, `start_scenario`, `list_scenarios`).
+- **Session Lifecycle**: Begin, end, and read a recorded `TrainingSession` from the instructor laptop:
+  - `start_session` — opens a new session. Optional `procedure` label is forwarded to `SessionJournal` and lands in the on-disk bundle manifest. Idempotent: re-calling on an active session returns the existing id.
+  - `end_session` — closes the active session, reports event count and the absolute `bundle_dir` (events.ndjson + tag_writes.ndjson + contract_snapshot.json + manifest.json) so downstream debrief tooling can locate the artifacts. Idempotent: no-op when no session is active.
+  - `annotate_session` — records a debrief marker (`label` required; optional `note` and `author`) on the active session. Annotations accumulate; they are NOT coaching delivered to the trainee (use `send_instructor_message` for that).
+  - `evaluate_session` — reads the in-memory chronological record (alarms, tag changes, scenario events, instructor messages, annotations) for LLM-side debrief narrative generation.
 - **Event Injection**: Trigger alarms and inject specific tag overrides during a live session.
+- **Instructor Coaching**: Push live coaching messages to the trainee's SCB chat (`send_instructor_message`). Mode-gated to Training only.
 
 ### TimeMachine (Time-Travel Simulation)
 The TimeMachine tools allow AI agents to navigate historical telemetry and predict future states when the `ArcHMITimeMachineProvider` is active in Unity.
@@ -161,7 +167,7 @@ The connector's startup line on stderr now reports the negotiated protocol
 alongside the bridge URL, e.g.:
 
 ```
-[arcui-mcp] ready — bridge=http://localhost:17842 protocol=1.0.0 auth=on tools=21
+[arcui-mcp] ready — bridge=http://localhost:17842 protocol=1.1.0 auth=on tools=24
 ```
 
 When running against a legacy bridge the suffix `(legacy)` is appended so the
@@ -177,6 +183,12 @@ Unity. Tools that honor the key:
 - `create_scenario`
 - `start_scenario`
 - `inject_event`
+- `start_session`
+- `end_session`
+
+`annotate_session` is intentionally **not** in this set: annotations are designed to
+accumulate, so two calls with the same key are expected to produce two markers in the
+audit trail, not one. Treat each annotation call as a distinct write.
 
 When a call carries an `idempotency_key`, the first execution runs normally and
 the successful response is cached for **5 minutes** under
