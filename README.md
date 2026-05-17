@@ -16,28 +16,17 @@ and does **not** persist state between runs. It is a stateless translator.
 | Hop | Trust | Protection |
 | --- | --- | --- |
 | MCP client ↔ connector | Same machine, same OS user, stdio pipe | OS process isolation |
-| Connector ↔ Unity bridge | Loopback `http://localhost:17842` by default. Plain HTTP to a non-loopback host is rejected on startup unless `ARCUI_BRIDGE_ALLOW_INSECURE=true` is set explicitly. | Optional `ARCUI_BRIDGE_TOKEN` bearer (recommended) |
+| Connector ↔ Unity bridge | Loopback HTTP by default. Plain HTTP to a non-loopback host is rejected on startup unless `ARCUI_BRIDGE_ALLOW_INSECURE=true` is set explicitly. | Optional `ARCUI_BRIDGE_TOKEN` bearer (recommended) |
 | Connector ↔ Gemini File Search | External, only when explicitly enabled | `GEMINI_API_KEY` + `ARCUI_ENABLE_KNOWLEDGE_TOOLS=true` |
 
 ### Input validation
 
-Every tool parameter is validated at the server boundary (`src/validation.js`) before
-any call reaches the Unity bridge or Gemini. The validator enforces:
-
-- **Type** — each parameter is checked against its declared kind (string, number,
-  boolean, enum). Mismatched types are rejected.
-- **Length** — every string has a bounded ceiling (256 chars default, 4 KB for
-  free-form prompts, 8 KB for `raw_value`, 1 MB for `session_json`/`json` blobs).
-- **Identifier character set** — `tag`, `tag_key`, `id`, and `scenario_id` accept
-  `A-Z a-z 0-9 _ . - : / [ ]`. This covers `System.ActiveView` (ArcUI conventions),
-  MQTT topics (`factory/line1/temp`), and OPC-UA / DCS addressing
-  (`Channel1.Device1[0]`). Spaces, quotes, `<`, `>`, `;`, `$`, and other
-  injection-style characters are rejected as defense in depth — URL and JSON
-  encoding on the wire already handle the allowed characters safely.
-- **Enum membership** — `level`, `value_type`, `type`, and similar fields only
-  accept their documented values.
-- **Numeric bounds** — limits like `1 ≤ limit ≤ 500` and `lookahead_seconds ≥ 0`
-  are enforced before the bridge call.
+Every tool parameter is validated at the server boundary before any call reaches
+the Unity bridge or Gemini. The validator enforces type correctness, bounded
+string lengths sized for the use case, enum membership, numeric bounds, and an
+identifier character set compatible with ArcUI tag conventions and common
+industrial addressing schemes (MQTT topics, OPC-UA / DCS). Injection-style
+characters are rejected as defense in depth.
 
 Validation errors return a clean, parameter-named message and **never echo the
 bad value back to the client**, so an attacker payload cannot reflect off the
@@ -46,51 +35,23 @@ documented schema reaches the Unity bridge.
 
 ### Testing & type checking
 
-The connector ships a `node:test` suite with **zero runtime dependencies** —
-it uses only Node's built-in test runner and assertion library. Run from the
-repo root:
-
 ```bash
-npm test       # 54-test suite
-npm run typecheck   # strict tsc --noEmit over JSDoc-annotated .js
+npm test          # full test suite, zero runtime dependencies
+npm run typecheck # strict static analysis over JSDoc-annotated .js
 ```
 
-`typecheck` runs TypeScript in JSDoc mode (`allowJs` + `checkJs`) against
-`src/` and `test/`. There is **no transpilation and no emit** — TypeScript
-is a `devDependencies` entry used purely for static analysis. The runtime
-remains plain ESM JavaScript, just like before.
-
-Coverage and conventions:
-
-- All exported public APIs in `validation.js`, `idempotency.js`,
-  `tools-filter.js`, `bridge.js`, `server.js`, and `check-bridge.js` carry
-  JSDoc type annotations and pass strict TypeScript checks (no implicit
-  any, strict null checks, no fallthrough cases).
-- `gemini-file-search.js` is currently marked `@ts-nocheck` because it
-  wraps the loosely-typed `@google/genai` SDK. Typing its public exports
-  is a documented follow-up.
-
-The Node test suite covers every hardening layer from the audit:
-
-- `validation.js` — every helper, boundary, and the `Patterns.TAG` allow /
-  reject set (injection-style payloads are explicitly rejected).
-- `idempotency.js` — cache hit/miss, TTL/LRU bounds, failure eviction,
-  concurrent-call collapsing.
-- `bridge.js` — URL guard (`evaluateBridgeUrl`) across loopback, external
-  HTTP, ALLOW_INSECURE, HTTPS, and bad schemes; protocol handshake across
-  the 5 wire scenarios (matching, legacy 404, incompatible MAJOR,
-  unreachable bridge, unparseable version).
-- `tools-filter.js` — capability-driven tool filtering with full / partial /
-  empty / null / coerced inputs.
-
-The suite uses real loopback HTTP servers on ephemeral ports for handshake
-scenarios — higher fidelity than mocks and zero supply-chain cost.
+The runtime is plain ESM JavaScript; TypeScript is a dev-only static analyzer
+(no transpile step). The suite exercises every hardening layer — input
+validation, the bridge URL guard, the protocol handshake across compatible /
+legacy / incompatible / unreachable bridges, capability-driven tool filtering,
+and idempotency cache behavior — using real loopback HTTP servers on ephemeral
+ports rather than mocks.
 
 ### Operational guidance
 
 - Set `ARCUI_BRIDGE_TOKEN` in production and keep it out of source control.
-- Keep the Unity bridge bound to loopback (`localhostOnly = true` on
-  `ArcHMIMcpBridge`). Do not expose port `17842` to untrusted or public networks.
+- Keep the Unity bridge bound to loopback. Do not expose its port to untrusted
+  or public networks.
 - If you must reach the Unity bridge from another machine, use TLS — terminate
   HTTPS at a reverse proxy on the Unity host and point `ARCUI_BRIDGE_URL` at
   the proxy's `https://` endpoint. The connector **refuses to start** if
@@ -121,57 +82,50 @@ The MCP server exposes several tool categories for AI agents to control the ArcU
 ### Operations & Training
 - **Core Operations**: Read tags, list active alarms, query system health, and list available sensors.
 - **Scenario Runner**: Create, start, and list training scenarios (`create_scenario`, `start_scenario`, `list_scenarios`).
-- **Session Lifecycle**: Begin, end, and read a recorded `TrainingSession` from the instructor laptop:
-  - `start_session` — opens a new session. Optional `procedure` label is forwarded to `SessionJournal` and lands in the on-disk bundle manifest. Idempotent: re-calling on an active session returns the existing id.
-  - `end_session` — closes the active session, reports event count and the absolute `bundle_dir` (events.ndjson + tag_writes.ndjson + contract_snapshot.json + manifest.json) so downstream debrief tooling can locate the artifacts. Idempotent: no-op when no session is active.
+- **Session Lifecycle**: Begin, end, and read recorded training sessions from the instructor laptop:
+  - `start_session` — opens a new session, optionally labeled by procedure so the recorded artifact is self-describing. Idempotent: re-calling on an active session returns the existing id.
+  - `end_session` — closes the active session, reports event count and the on-disk location of the recorded session bundle for downstream debrief tooling. Idempotent: no-op when no session is active.
   - `annotate_session` — records a debrief marker (`label` required; optional `note` and `author`) on the active session. Annotations accumulate; they are NOT coaching delivered to the trainee (use `send_instructor_message` for that).
   - `evaluate_session` — reads the in-memory chronological record (alarms, tag changes, scenario events, instructor messages, annotations) for LLM-side debrief narrative generation.
 - **Event Injection**: Trigger alarms and inject specific tag overrides during a live session.
 - **Instructor Coaching**: Push live coaching messages to the trainee's SCB chat (`send_instructor_message`). Mode-gated to Training only.
 
+Recorded sessions are written as an append-only, audit-friendly bundle (separate
+streams for events, tag writes, and a snapshot of the data contract active at
+recording time, plus a manifest with per-artifact hashes) suitable for
+ISA-18.2 / IEC 62304-style audit reconstruction.
+
 ### TimeMachine (Time-Travel Simulation)
-The TimeMachine tools allow AI agents to navigate historical telemetry and predict future states when the `ArcHMITimeMachineProvider` is active in Unity.
+The TimeMachine tools allow AI agents to navigate historical telemetry and predict future states when a TimeMachine playback provider is active in Unity.
 - `timemachine_play` / `timemachine_pause`: Control playback of the simulation timeline.
 - `timemachine_seek`: Jump to a specific timestamp in the scenario (in seconds).
 - `timemachine_forecast`: Predict the future value of a specific tag by looking ahead in the pre-loaded telemetry.
 
-> **Security Note:** TimeMachine and Training injections write to the live DataStore and therefore inherit the bridge's auth posture. When `ARCUI_BRIDGE_TOKEN` is set, every tool call to the Unity bridge must present a matching bearer token; when it is unset, `ArcHMIMcpBridge` rejects all requests by default (`allowUnauthenticated = false`). Keep the bridge bound to loopback and the token out of source control. See the [Security model](#security-model) section for the full trust picture.
+> **Security Note:** TimeMachine and Training injections write to the live DataStore and therefore inherit the bridge's auth posture. When `ARCUI_BRIDGE_TOKEN` is set, every tool call to the Unity bridge must present a matching bearer token; when it is unset, the Unity bridge rejects all requests by default. Keep the bridge bound to loopback and the token out of source control. See the [Security model](#security-model) section for the full trust picture.
 
 ## Protocol handshake
 
-On startup the connector calls `GET /mcp/schema` against the configured bridge
-to negotiate the wire-protocol version and discover which features the bridge
-actually supports. Behavior:
+On startup the connector negotiates a wire-protocol version with the Unity
+bridge and discovers which features the bridge actually supports. Behavior:
 
-- **Compatible bridge (matching protocol MAJOR)** — the connector caches the
-  reported `capabilities` and **filters the tool catalog** advertised to the
-  MCP client. Tools that depend on a disabled capability are hidden so the
-  client never tries to call something the bridge cannot execute. For example
-  a bridge built without TimeMachine wiring would advertise
-  `timemachine: false`, and `timemachine_*` tools would not appear in the
-  client's tool list.
-- **Legacy bridge (no `/mcp/schema` endpoint, returns 404)** — the connector
-  logs a warning and proceeds with a permissive default (`protocol 1.0.0`,
-  all capabilities enabled). This keeps installations from before the
-  handshake landed working.
-- **Unreachable bridge (timeout, ECONNREFUSED)** — the connector logs a
-  warning and proceeds with the same permissive default. Tool calls will
-  surface a clear error when actually invoked. This matches the prior
-  behavior where the MCP client could be launched before Unity Play Mode.
-- **Incompatible protocol (MAJOR mismatch)** — FATAL. The connector exits
-  with a clear message telling the operator to update either
-  `ArcHMIMcpBridge.PROTOCOL_VERSION` on the Unity side or the connector.
-  Continuing would expose tools that may have changed wire shapes.
+- **Compatible bridge** — the connector caches the reported capabilities and
+  **filters the tool catalog** advertised to the MCP client. Tools that depend
+  on a disabled capability are hidden so the client never tries to call
+  something the bridge cannot execute. A bridge built without TimeMachine, for
+  example, will simply not advertise `timemachine_*` tools to the client.
+- **Legacy bridge (handshake unavailable)** — the connector logs a warning and
+  proceeds with a permissive default so installations from before the
+  handshake landed keep working.
+- **Unreachable bridge** — the connector logs a warning and starts anyway with
+  the same permissive default. Tool calls will surface a clear error when
+  actually invoked. This matches the prior behavior where the MCP client could
+  be launched before Unity Play Mode.
+- **Incompatible protocol (MAJOR mismatch)** — FATAL. The connector exits with
+  a clear message telling the operator to update either the Unity side or the
+  connector. Continuing would expose tools that may have changed wire shapes.
 
-The connector's startup line on stderr now reports the negotiated protocol
-alongside the bridge URL, e.g.:
-
-```
-[arcui-mcp] ready — bridge=http://localhost:17842 protocol=1.1.0 auth=on tools=24
-```
-
-When running against a legacy bridge the suffix `(legacy)` is appended so the
-operator knows capability filtering is not active.
+The startup line on stderr reports the negotiated protocol alongside the
+bridge URL so mismatches are visible at a glance.
 
 ## Idempotency
 
@@ -191,11 +145,10 @@ accumulate, so two calls with the same key are expected to produce two markers i
 audit trail, not one. Treat each annotation call as a distinct write.
 
 When a call carries an `idempotency_key`, the first execution runs normally and
-the successful response is cached for **5 minutes** under
-`<tool_name>:<key>`. Any subsequent call with the same key within that window
-returns the cached response **without re-executing the handler** — no second
-write to the Unity DataStore. Concurrent in-flight calls with the same key
-collapse onto a single bridge round-trip.
+its successful response is cached for a short window. Subsequent calls with the
+same key within that window return the cached response **without re-executing
+the handler** — no second write to the Unity DataStore. Concurrent in-flight
+calls with the same key collapse onto a single bridge round-trip.
 
 Behavior details:
 
@@ -205,9 +158,9 @@ Behavior details:
 - **Process-local only.** The cache lives in this Node process. A connector
   restart clears it; a key submitted after restart falls through and executes.
   For longer-horizon guarantees, the destination system must also be defensive.
-- **Bounded memory.** Cache is capped at 256 entries with LRU eviction. No
-  references to Unity DataStore tags, alarms, or sessions are retained beyond
-  the cached MCP response payload.
+- **Bounded memory.** Cache size is capped with LRU eviction. No references to
+  Unity DataStore tags, alarms, or sessions are retained beyond the cached MCP
+  response payload.
 - **Opt-in.** Tools without `idempotency_key` behave exactly as before; this is
   purely additive.
 
